@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from . import neural, tones
+from .speechcache import SpeechCache
 
 SYSTEM_SOUND_DIRS = (
     Path("/System/Library/Sounds"),
@@ -38,7 +39,7 @@ class Player:
     """
 
     def __init__(self, builtin_dir: Path, user_dir: Path, *, log=None,
-                 tts: list | None = None) -> None:
+                 tts: list | None = None, speech_cache: SpeechCache | None = None) -> None:
         self.builtin_dir = builtin_dir
         self.user_dir = user_dir
         self._log = log or (lambda *a, **k: None)
@@ -53,6 +54,8 @@ class Player:
         self.say = shutil.which("say")
         # 機械学習の読み上げエンジン（neural.NeuralTTS / neural.AivisTTS）
         self.tts = list(tts or [])
+        # say で作った読み上げも取っておく（無ければ毎回作って消す）
+        self.speech_cache = speech_cache
 
     # --- サウンドの解決 ---------------------------------------------------
 
@@ -225,7 +228,12 @@ class Player:
         """say の出力を AIFF に落とす。音量を afplay 側で揃えるため。"""
         if not self.say:
             return None
-        out = self._tmpdir / f"say-{int(time.time()*1000)}.wav"
+        cached = None
+        if self.speech_cache:
+            cached = self.speech_cache.path(f"say:{voice}", rate, text)
+            if self.speech_cache.get(cached):
+                return cached
+        out = self._tmpdir / f"say-{int(time.time()*1000)}-{threading.get_ident()}.wav"
         # WAVE + リトルエンディアン。AIFF はビッグエンディアンしか受け付けない
         argv = [self.say, "-o", str(out), "--file-format=WAVE", "--data-format=LEI16@22050"]
         if voice:
@@ -242,6 +250,13 @@ class Player:
             msg = r.stderr.decode("utf-8", "replace").strip()[:200]
             self._log("error", f"読み上げの生成に失敗しました: {msg}")
             return None
+        if cached:
+            try:
+                cached.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(out), cached)
+                return self.speech_cache.adopt(cached)
+            except OSError:
+                pass
         return out
 
     def play(self, action: dict, *, settings: dict, label: str = "",

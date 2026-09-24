@@ -26,6 +26,7 @@ from .config import Store, ValidationError
 from .eventlog import EventLog
 from .player import Player, SoundNotFound
 from .scheduler import Scheduler
+from .speechcache import SpeechCache
 
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024   # 1 ファイルの上限
 MAX_BODY = MAX_UPLOAD_BYTES * 4 // 3 + 1024 * 1024  # base64 化した分の余裕を見る
@@ -60,7 +61,8 @@ class App:
             neural.AivisTTS(cache, log=self.log,
                             url=os.environ.get("SOUNDER_AIVIS_URL", neural.AIVIS_URL)),
         ]
-        self.player = Player(self.builtin_dir, self.user_dir, log=self.log, tts=tts)
+        self.player = Player(self.builtin_dir, self.user_dir, log=self.log, tts=tts,
+                             speech_cache=SpeechCache(cache))
         # 保存時にサウンドの存在を確かめる（鳴らす瞬間に気づくのでは遅い）
         self.store = Store(home / "data" / "config.json", sound_check=self.player.resolve)
         self.scheduler = Scheduler(self.store, self.player, self.log)

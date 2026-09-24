@@ -13,7 +13,6 @@ sounder 本体は標準ライブラリのまま。
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -26,11 +25,12 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from .speechcache import SpeechCache
+
 PREFIX = "qwen:"
 AIVIS_PREFIX = "aivis:"
 DEFAULT_URL = "http://127.0.0.1:8778"
 AIVIS_URL = "http://127.0.0.1:10101"
-CACHE_LIMIT = 300
 # say の話す速さ（1 分あたりの語数）のうち、AivisSpeech の等速にあたる値
 BASE_RATE = 180
 # 話者ごとの母語。その他（serena, vivian など）は中国語
@@ -67,6 +67,7 @@ class _Engine:
 
     def __init__(self, cache_dir: Path, *, url: str, log=None) -> None:
         self.cache_dir = cache_dir
+        self.cache = SpeechCache(cache_dir)
         self.url = url.rstrip("/")
         self._log = log or (lambda *a, **k: None)
         # SOUNDER_MANAGE_TTS=0 で起こす／休ませるをしない（テストが本物の LaunchAgent に触らないように）
@@ -173,18 +174,14 @@ class _Engine:
             return True
         return False
 
-    def cache_path(self, text: str, voice: str, rate: int | None = None) -> Path:
-        key = hashlib.sha256(f"{voice}\n{rate or ''}\n{text}".encode()).hexdigest()[:32]
-        return self.cache_dir / f"{key}.wav"
-
     def _cache_rate(self, rate: int | None) -> int | None:
         """速さが音声に効くエンジンだけ、キャッシュの鍵に速さを入れる。"""
         return None
 
     def render(self, text: str, voice: str, rate: int | None = None) -> Path | None:
         """WAV のパスを返す。作れなければ None（呼び出し側が say に切り替える）。"""
-        path = self.cache_path(text, voice, self._cache_rate(rate))
-        if path.is_file():
+        path = self.cache.path(voice, self._cache_rate(rate), text)
+        if self.cache.get(path):
             return path
         self.last_used = time.monotonic()
         if not self.ensure_up():
@@ -199,25 +196,13 @@ class _Engine:
         except (OSError, ValueError) as exc:
             self._log("error", f"{self.title} に接続できません（{exc}）。標準の声で読み上げます")
             return None
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        # 先読みと本番が同時に作っても壊れないよう、一時ファイルはスレッドごとに分ける
-        tmp = path.with_suffix(f".{threading.get_ident()}.part")
-        tmp.write_bytes(wav)
-        os.replace(tmp, path)
+        self.cache.put(path, wav)
         self.last_used = time.monotonic()
-        self._prune()
         return path
 
     def _synthesize(self, text: str, voice: str, rate: int | None) -> bytes:
         raise NotImplementedError
 
-    def _prune(self) -> None:
-        files = sorted(self.cache_dir.glob("*.wav"), key=lambda p: p.stat().st_mtime)
-        for p in files[:-CACHE_LIMIT]:
-            try:
-                p.unlink()
-            except OSError:
-                pass
 
 
 class NeuralTTS(_Engine):

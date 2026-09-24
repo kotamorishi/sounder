@@ -102,13 +102,12 @@ class TestClient(ServerMixin, unittest.TestCase):
         self.assertIsNone(self.tts.render("はい", "qwen:ono_anna"))
         self.assertIn("boom", self.msgs[-1][1])
 
-    def test_cache_is_pruned(self):
-        old = neural.CACHE_LIMIT
-        neural.CACHE_LIMIT = 2
-        self.addCleanup(setattr, neural, "CACHE_LIMIT", old)
-        for i in range(4):
-            self.tts.render(f"文 {i}", "qwen:ono_anna")
-        self.assertEqual(len(list(self.tts.cache_dir.glob("*.wav"))), 2)
+    def test_cache_hit_counts_as_use(self):
+        p = self.tts.render("こんにちは", "qwen:ono_anna")
+        os.utime(p, (0, 0))
+        self.tts.render("こんにちは", "qwen:ono_anna")
+        self.assertGreater(p.stat().st_mtime, 1e9)   # 使ったので更新時刻が今になる
+        self.assertEqual(len(FakeTTS.requests), 1)
 
 
 class TestServerDown(unittest.TestCase):
