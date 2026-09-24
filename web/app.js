@@ -507,7 +507,7 @@ function renderSettings() {
   $('#quiet-end').value = q.end || '07:00';
   $('#quiet-desc').textContent = SL.describeQuiet(q);
   $('#set-voice-val').textContent = voiceLabel(st.default_voice) || 'システム既定';
-  if (!$('#push-voice').hidden) renderVoiceList($('#set-voice-list'), st.default_voice, (v) => saveSettings({ default_voice: v }));
+  if (!$('#push-voice').hidden) renderVoiceList($('#set-voice-list'), st.default_voice, (v) => { saveSettings({ default_voice: v }, '声を保存しました'); previewSpeech({ voice: v, rate: Number($('#set-rate').value), volume: Number($('#set-volume').value) }); });
 }
 
 async function saveSettings(patch, okMsg) {
@@ -556,6 +556,8 @@ function renderVoiceList(box, chosen, onPick, firstTitle) {
   }
   if (!state.voices.length) {
     box.append(el('p', 'footnote', 'この環境では読み上げの声の一覧を取得できませんでした。'));
+  } else {
+    box.append(el('p', 'footnote', 'タップすると選んで、Mac で試聴します。'));
   }
 }
 
@@ -982,6 +984,16 @@ function duplicate(s) {
   openEditor(copy, { asNew: true });
 }
 
+/** 読み上げを Mac で試聴する（声・速さを変えたとき）。文章が空なら声の言語に合う見本を読む */
+function previewSpeech({ voice, rate, volume, text }) {
+  const v = state.voices.find((x) => x.name === voice);
+  const ja = !v || v.locale.startsWith('ja');
+  const sample = (text || '').trim() || (ja ? 'お出かけの時間です。' : "It's time to go.");
+  api('POST', '/api/preview', { type: 'speak', text: sample, voice: voice || '', rate, volume })
+    .then(() => toast(voice && voice.startsWith('qwen:') ? 'Mac で再生します（声を作るのに数秒かかります）' : 'Mac で再生します'))
+    .catch(fail);
+}
+
 async function preview(ref) {
   if (!ref) { toast('サウンドを選んでください', true); return; }
   try {
@@ -1280,7 +1292,7 @@ function renderSoundPage() {
     block.append(g);
     box.append(block);
   }
-  box.append(el('p', 'footnote', 'タップすると選んで試聴します。'));
+  box.append(el('p', 'footnote', 'タップすると選んで、Mac で試聴します。'));
 }
 
 // --- 子画面: 読み上げ
@@ -1289,7 +1301,10 @@ function renderSpeakPage() {
   $('[data-speak-only]').hidden = !draft._speak;
   $('#f-rate-out').textContent = $('#f-rate').value;
   setRangeFill($('#f-rate'));
-  renderVoiceList($('#f-voice-list'), draft.action.voice, (v) => { draft.action.voice = v; }, '声');
+  renderVoiceList($('#f-voice-list'), draft.action.voice, (v) => {
+    draft.action.voice = v;
+    previewSpeech({ voice: v, rate: Number(draft.action.rate), volume: Number(draft.action.volume), text: draft.action.text });
+  }, '声');
 }
 
 // --- 子画面: 予告
@@ -1594,13 +1609,19 @@ function wire() {
     $('#vol-out').textContent = SL.volumePct(e.target.value);
     setRangeFill(e.target);
   });
-  $('#set-volume').addEventListener('change', (e) => saveSettings({ default_volume: Number(e.target.value) }, '音量を保存しました'));
+  $('#set-volume').addEventListener('change', (e) => {
+    saveSettings({ default_volume: Number(e.target.value) }, '音量を保存しました');
+    api('POST', '/api/preview', { type: 'sound', sound: 'builtin:ding', volume: Number(e.target.value) }).catch(fail);
+  });
   $('#vol-test').addEventListener('click', () => {
     api('POST', '/api/preview', { type: 'sound', sound: 'builtin:ding', volume: Number($('#set-volume').value) })
       .then(() => toast('再生しました')).catch(fail);
   });
   $('#set-rate').addEventListener('input', (e) => { $('#rate-out').textContent = e.target.value; setRangeFill(e.target); });
-  $('#set-rate').addEventListener('change', (e) => saveSettings({ speak_rate: Number(e.target.value) }, '速さを保存しました'));
+  $('#set-rate').addEventListener('change', (e) => {
+    saveSettings({ speak_rate: Number(e.target.value) }, '速さを保存しました');
+    previewSpeech({ voice: state.settings.default_voice, rate: Number(e.target.value), volume: Number($('#set-volume').value) });
+  });
   $('#voice-test').addEventListener('click', () => {
     api('POST', '/api/preview', {
       type: 'speak', text: 'お出かけの時間です。', voice: state.settings.default_voice || '',
@@ -1620,7 +1641,7 @@ function wire() {
   $('#quiet-start').addEventListener('change', saveQuiet);
   $('#quiet-end').addEventListener('change', saveQuiet);
   $('#set-voice-btn').addEventListener('click', () => {
-    renderVoiceList($('#set-voice-list'), state.settings.default_voice, (v) => saveSettings({ default_voice: v }, '声を保存しました'));
+    renderVoiceList($('#set-voice-list'), state.settings.default_voice, (v) => { saveSettings({ default_voice: v }, '声を保存しました'); previewSpeech({ voice: v, rate: Number($('#set-rate').value), volume: Number($('#set-volume').value) }); });
     openPush('#push-voice');
   });
   $('#log-btn').addEventListener('click', () => { renderLog(); openPush('#push-log'); loadLog(); });
@@ -1690,12 +1711,14 @@ function wire() {
     renderRepeatPage();
   }));
   $('#f-volume').addEventListener('input', (e) => { draft.action.volume = Number(e.target.value); renderEditorValues(); });
+  $('#f-volume').addEventListener('change', () => { if (actionType()) previewMain(); });
   $('#f-test').addEventListener('click', previewMain);
   $('#f-repeat-dec').addEventListener('click', () => { draft.action.repeat = Math.max(1, (draft.action.repeat || 1) - 1); renderEditorValues(); });
   $('#f-repeat-inc').addEventListener('click', () => { draft.action.repeat = Math.min(10, (draft.action.repeat || 1) + 1); renderEditorValues(); });
   $('#f-lead-speak').addEventListener('click', () => {
     draft.lead_action.speak_remaining = !draft.lead_action.speak_remaining;
     setSwitch($('#f-lead-speak'), draft.lead_action.speak_remaining);
+    if (draft.lead_action.speak_remaining) previewLead();
   });
   $('#f-lead-test').addEventListener('click', previewLead);
   $('#f-speak').addEventListener('click', () => {
@@ -1709,6 +1732,10 @@ function wire() {
     draft.action.rate = Number(e.target.value);
     $('#f-rate-out').textContent = e.target.value;
     setRangeFill(e.target);
+  });
+  $('#f-rate').addEventListener('change', () => {
+    const a = draft.action;
+    previewSpeech({ voice: a.voice, rate: Number(a.rate), volume: Number(a.volume), text: a.text });
   });
 
   // デスクトップ Chrome ではアイコンを隠しているので、タップでピッカーを出す
