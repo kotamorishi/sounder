@@ -3,7 +3,7 @@
 効果音ラボの音は無料で使えるが再配布は禁止なので、リポジトリには入れない。
 各自の Mac で次を実行して sounds/effects/<分類>/ にダウンロードする（sounds/effects は git の外）。
 
-  python3 -m sounder.effects                       全分類（ボタン・環境音・動物・生活・声素材など）
+  python3 -m sounder.effects                       全分類（ボタン・環境音・動物・生活など。声素材は除く）
   python3 -m sounder.effects https://soundeffect-lab.info/sound/anime/   分類を選んで
 
 分類のトップページから、同じ分類の続きのページ（battle2.html など）もたどって 1 つの分類にまとめる。
@@ -26,8 +26,8 @@ from pathlib import Path
 SITE = "https://soundeffect-lab.info"
 DEFAULT_PAGES = [SITE + p for p in (
     "/sound/button/", "/sound/environment/", "/sound/animal/", "/sound/anime/", "/sound/battle/",
-    "/sound/machine/", "/sound/various/", "/sound/voice/game.html",
-)]
+    "/sound/machine/", "/sound/various/",
+)]  # 声素材（/sound/voice/）は読み上げの声で足りるので既定では取らない（URL を渡せば取れる）
 UA = "Mozilla/5.0 (Macintosh) sounder/1.0 (personal use)"
 # 声素材のページは題名の前に小さなアイコンが入る
 ITEM_RE = re.compile(r'<li>(?:<img[^>]*>)?<span>([^<]+)</span>([^<]*)<a href="([^"]+\.mp3)"')
