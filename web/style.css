@@ -339,6 +339,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 28px; }
   margin: 0; font-size: 13px; color: var(--accent); font-weight: 600;
   background: var(--accent-soft); border-radius: var(--r-sm); padding: 9px 11px;
 }
+.summary-line.is-warn { color: var(--lead); background: var(--lead-soft); }
 
 .segmented { display: flex; background: var(--surface-2); border-radius: var(--r-sm); padding: 3px; gap: 3px; }
 .segmented-wrap { flex-wrap: wrap; }

@@ -279,7 +279,7 @@ class Scheduler:
             self.log("skipped", f"{label}: 禁止時間のためスキップしました", schedule_id=sched["id"])
             return
 
-        action = self._action_for(sched, tag, lead, settings)
+        action = self.action_for(sched, tag, lead, settings)
         self.log("fired", f"{label} を再生しました", schedule_id=sched["id"])
         self.store.mark_fired(sched["id"], when)
         self.player.play(action, settings=settings, label=label, queue=True)
@@ -291,7 +291,7 @@ class Scheduler:
             except KeyError:
                 pass
 
-    def _action_for(self, sched: dict, tag: str, lead: int, settings: dict) -> dict:
+    def action_for(self, sched: dict, tag: str, lead: int, settings: dict) -> dict:
         if tag == "main":
             return sched["action"]
         la = dict(sched.get("lead_action") or {"type": "sound", "sound": "builtin:melody_notice"})

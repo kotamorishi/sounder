@@ -308,7 +308,7 @@ class Handler(BaseHTTPRequestHandler):
                 which = (self._json_body().get("which") or "main")
                 if which == "lead" and s.get("lead_action"):
                     lead = (s.get("lead_times") or [5])[0]
-                    action = app.scheduler._action_for(s, "lead", lead, app.store.settings)
+                    action = app.scheduler.action_for(s, "lead", lead, app.store.settings)
                 else:
                     action = s["action"]
                 app.player.play(action, settings=app.store.settings, label=f"試聴:{s['name']}")

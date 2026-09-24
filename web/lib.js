@@ -107,6 +107,12 @@
     return base;
   }
 
+  /** 「1回だけ」の予定がもう過ぎているか */
+  function isPast(d, now) {
+    if (d.kind !== 'once' || !d.date || !d.time) return false;
+    return parseLocal(d.date + 'T' + d.time + ':00') <= (now || new Date());
+  }
+
   /** 禁止時間の説明文 */
   function describeQuiet(q) {
     if (!q || !q.enabled) return '禁止時間は使っていません。夜中でも予定どおり鳴ります。';
@@ -149,7 +155,7 @@
     weekStart: weekStart, sameDay: sameDay, weekRangeLabel: weekRangeLabel,
     fmtClock: fmtClock, fmtWhen: fmtWhen, fmtCountdown: fmtCountdown,
     describeDays: describeDays, describeDom: describeDom, describeRecurrence: describeRecurrence,
-    describeQuiet: describeQuiet, volumePct: volumePct,
+    describeQuiet: describeQuiet, volumePct: volumePct, isPast: isPast,
     domOptions: domOptions, monthOptions: monthOptions, intervalOptions: intervalOptions,
     domHint: domHint,
   };

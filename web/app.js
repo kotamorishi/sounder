@@ -690,7 +690,10 @@ function syncEditor() {
   draft.action.repeat = Number($('#f-repeat').value);
   draft.lead_action.speak_remaining = $('#f-lead-speak').checked;
 
-  $('#f-summary').textContent = SL.describeRecurrence(draft);
+  var past = SL.isPast(draft);
+  $('#f-summary').textContent = SL.describeRecurrence(draft)
+    + (past ? '　← この日時はもう過ぎています' : '');
+  $('#f-summary').classList.toggle('is-warn', past);
   $('#f-vol-out').textContent = SL.volumePct(draft.action.volume);
   $('#dom-hint').textContent = SL.domHint(draft.day_of_month);
   $('#f-sound-name').textContent = soundLabel(draft.action.sound);

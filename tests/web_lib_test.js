@@ -104,6 +104,13 @@ ok(SL.domHint('31').indexOf('鳴りません') > 0, 'domHint 31日');
 eq(SL.domHint('15'), '', 'domHint ふつうの日');
 eq(SL.DAYS.length, 7, 'DAYS');
 
+// --- 過ぎた予定の判定 ---
+ok(SL.isPast({ kind: 'once', date: '2026-09-23', time: '08:00' }, NOW), 'isPast 過去');
+ok(!SL.isPast({ kind: 'once', date: '2026-09-25', time: '08:00' }, NOW), 'isPast 未来');
+ok(!SL.isPast({ kind: 'weekly', date: '2026-09-23', time: '08:00' }, NOW), 'isPast 毎週は対象外');
+ok(!SL.isPast({ kind: 'once', time: '08:00' }, NOW), 'isPast 日付なし');
+ok(!SL.isPast({ kind: 'once', date: '2026-09-25' }, NOW), 'isPast 時刻なし');
+
 // すべての公開関数を一度は呼んだか
 Object.keys(RAW).forEach(function (k) {
   if (!used[k]) failures.push('未テストの関数: ' + k);
