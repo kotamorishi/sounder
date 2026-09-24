@@ -1,4 +1,10 @@
-/* sounder — iPhone Safari 向け（iOS 時計アプリ型）。外部フォント・CDN なし。 */
+/* sounder — iPhone Safari 向け（iOS 時計アプリ型）。CDN なし。書体は web/fonts/ に同梱した M PLUS Rounded 1c（OFL）を自前配信。 */
+
+/* 同梱ウェイトは 300 / 400 / 500 / 700 だけ（CSS もこの4つに揃える） */
+@font-face { font-family: "M PLUS Rounded 1c"; font-style: normal; font-weight: 300; font-display: swap; src: url("/fonts/MPLUSRounded1c-Light.woff2") format("woff2"); }
+@font-face { font-family: "M PLUS Rounded 1c"; font-style: normal; font-weight: 400; font-display: swap; src: url("/fonts/MPLUSRounded1c-Regular.woff2") format("woff2"); }
+@font-face { font-family: "M PLUS Rounded 1c"; font-style: normal; font-weight: 500; font-display: swap; src: url("/fonts/MPLUSRounded1c-Medium.woff2") format("woff2"); }
+@font-face { font-family: "M PLUS Rounded 1c"; font-style: normal; font-weight: 700; font-display: swap; src: url("/fonts/MPLUSRounded1c-Bold.woff2") format("woff2"); }
 
 :root {
   --bg: #f2f0eb;
@@ -70,7 +76,7 @@ body {
   min-height: 100vh;
   background: var(--bg);
   color: var(--ink);
-  font: 17px/1.35 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
+  font: 17px/1.35 "M PLUS Rounded 1c", -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
@@ -123,7 +129,7 @@ svg { flex-shrink: 0; }
 .navbar-inner > :last-child { justify-self: end; }
 .nav-title {
   font-size: 17px;
-  font-weight: 600;
+  font-weight: 500;
   opacity: 0;
   transition: opacity .15s;
   white-space: nowrap;
@@ -237,6 +243,8 @@ button.cell:active, .cell-press:active { background: var(--fill); }
   padding: 6px 0;
   text-align: right;
 }
+/* 入力欄の既定幅（size=20 相当）は書体で変わるので、ラベルの方を縮ませない */
+.cell-label:has(+ .cell-text) { flex: 0 0 auto; }
 .cell-input.cell-text::placeholder { color: var(--ink-off); }
 .cell-num { width: 96px; text-align: right; }
 input[type="time"].cell-input, input[type="date"].cell-input { min-width: 96px; text-align: center; }
@@ -351,7 +359,7 @@ input[type="range"]::-moz-range-thumb {
 }
 .banner-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .banner-sub { font-size: 13px; color: var(--ink-2); }
-.banner-main { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.banner-main { font-size: 15px; font-weight: 500; overflow-wrap: anywhere; }
 .banner-note { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
 .banner.is-off .tile { background: var(--fill); color: var(--err); }
 .banner.is-off .banner-main { color: var(--err); }
@@ -379,7 +387,7 @@ input[type="range"]::-moz-range-thumb {
   background: var(--accent);
   color: #fff;
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 500;
 }
 .pill-btn:active { opacity: .7; }
 
@@ -455,11 +463,11 @@ input[type="range"]::-moz-range-thumb {
 /* ---------------------------------------------------------------- 空状態・プリセット */
 
 .empty { padding: 8px 0 0; }
-.empty-title { margin: 12px 16px 4px; font-size: 20px; font-weight: 600; }
+.empty-title { margin: 12px 16px 4px; font-size: 20px; font-weight: 500; }
 .empty-text { margin: 0 16px 22px; color: var(--ink-2); font-size: 15px; }
 .preset-cell { align-items: flex-start; padding-top: 10px; padding-bottom: 10px; }
 .preset-cell .cell-label { display: flex; flex-direction: column; gap: 2px; }
-.preset-cell b { font-weight: 600; }
+.preset-cell b { font-weight: 500; }
 .preset-cell small { color: var(--ink-2); font-size: 13px; }
 .preset-cell .chev { align-self: center; }
 
@@ -491,7 +499,7 @@ input[type="range"]::-moz-range-thumb {
   text-align: left;
 }
 .preset:active { background: var(--fill); }
-.preset b { font-size: 15px; font-weight: 600; }
+.preset b { font-size: 15px; font-weight: 500; }
 .preset span { font-size: 12px; color: var(--ink-2); line-height: 1.35; }
 
 /* ---------------------------------------------------------------- タブバー */
@@ -560,7 +568,7 @@ input[type="range"]::-moz-range-thumb {
   padding: 1px 8px;
   border-radius: 999px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   background: var(--fill);
   color: var(--ink-2);
 }
@@ -701,7 +709,7 @@ input[type="range"]::-moz-range-thumb {
   background: var(--surface);
   color: var(--err);
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .bigtime {
@@ -717,7 +725,7 @@ input[type="range"]::-moz-range-thumb {
   background: none;
   color: var(--ink);
   font-size: 56px;
-  font-weight: 200;
+  font-weight: 300;
   line-height: 1.15;
   letter-spacing: -.01em;
   text-align: center;
@@ -733,7 +741,7 @@ input[type="range"]::-moz-range-thumb {
 .big-date { font-size: 26px; font-weight: 400; min-height: 44px; color: var(--accent); }
 .big-mid { font-size: 38px; min-height: 56px; padding: 2px 4px; max-width: 160px; }
 .bigtime-range { display: flex; align-items: center; justify-content: center; gap: 4px; max-width: 100%; }
-.bigtime-dash { font-size: 30px; font-weight: 200; color: var(--ink-2); }
+.bigtime-dash { font-size: 30px; font-weight: 300; color: var(--ink-2); }
 .bigtime-caption { margin: 0; font-size: 15px; color: var(--ink-2); }
 
 .stepper {
@@ -774,7 +782,7 @@ input[type="range"]::-moz-range-thumb {
 .segmented button[aria-checked="true"] {
   background: var(--seg);
   box-shadow: 0 1px 3px rgba(0, 0, 0, .12);
-  font-weight: 600;
+  font-weight: 500;
 }
 .quick { display: flex; gap: 8px; margin: 0 0 10px; }
 .quick button {
@@ -905,7 +913,7 @@ input[type="range"]::-moz-range-thumb {
 }
 .tl-state { font-size: 12px; color: var(--ink-2); }
 .tl-card.is-past, .tl-chime.is-past { background: var(--fill); border-color: transparent; box-shadow: none; }
-.tl-card.is-past .t, .tl-card.is-past .n { color: var(--ink-2); font-weight: 600; }
+.tl-card.is-past .t, .tl-card.is-past .n { color: var(--ink-2); font-weight: 500; }
 .tl-card.is-muted, .tl-chime.is-muted {
   border: 1.5px dashed var(--chevron);
   background: transparent;
@@ -928,7 +936,7 @@ input[type="range"]::-moz-range-thumb {
 }
 .tl-chime:active { opacity: .7; }
 .tl-chime svg { color: var(--accent); }
-.tl-chime b { font-weight: 600; }
+.tl-chime b { font-weight: 500; }
 .tl-chime .n { color: var(--ink-2); }
 .tl-chime.is-past .n, .tl-chime.is-past b { color: var(--ink-off); }
 .tl-item-now { left: 34px; z-index: 5; pointer-events: none; }
@@ -991,7 +999,7 @@ input[type="range"]::-moz-range-thumb {
 }
 .as-btn:active { background: var(--fill); }
 .as-btn.is-danger { color: var(--err); }
-.as-btn.as-cancel { font-weight: 600; background: var(--sheet-btn); }
+.as-btn.as-cancel { font-weight: 500; background: var(--sheet-btn); }
 .as-group { background: var(--sheet-btn); }
 
 .toast {
