@@ -1,0 +1,8 @@
+# 生成物・個人データはリポジトリに入れない
+data/
+sounds/builtin/*.wav
+sounds/user/*
+!sounds/user/.gitkeep
+__pycache__/
+*.pyc
+.DS_Store

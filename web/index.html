@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>sounder — 時刻チャイム</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">🔔</span>
+    <span>sounder</span>
+  </div>
+  <div class="clock" id="clock">--:--:--</div>
+  <div class="topbar-actions">
+    <label class="switch" title="全体のオン／オフ">
+      <input type="checkbox" id="master">
+      <span class="track"></span>
+      <span class="switch-label" id="master-label">オン</span>
+    </label>
+    <button class="btn btn-quiet" id="stop-btn" title="鳴っている音を止める">■ 停止</button>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab is-active" data-tab="schedules" role="tab">予定</button>
+  <button class="tab" data-tab="sounds" role="tab">サウンド</button>
+  <button class="tab" data-tab="settings" role="tab">設定</button>
+  <button class="tab" data-tab="log" role="tab">ログ</button>
+</nav>
+
+<main>
+  <!-- ===== 予定 ===== -->
+  <section class="panel is-active" id="panel-schedules">
+    <div class="upnext" id="upnext-card">
+      <h2>次に鳴る予定</h2>
+      <ol class="upnext-list" id="upnext"></ol>
+    </div>
+
+    <div class="section-head">
+      <h2>登録済みの予定 <span class="count" id="sched-count"></span></h2>
+      <button class="btn btn-primary" id="new-btn">＋ 新しい予定</button>
+    </div>
+    <div id="sched-list" class="cards"></div>
+    <p class="empty" id="sched-empty" hidden>まだ予定がありません。「＋ 新しい予定」から作ってください。</p>
+
+    <details class="presets">
+      <summary>よく使う型から作る</summary>
+      <div class="preset-grid" id="presets"></div>
+    </details>
+  </section>
+
+  <!-- ===== サウンド ===== -->
+  <section class="panel" id="panel-sounds">
+    <h2>内蔵サウンド</h2>
+    <p class="hint">この Mac の中で生成した音です。クリックすると試聴できます。</p>
+    <div class="chip-grid" id="lib-builtin"></div>
+
+    <h2>自分のファイル</h2>
+    <p class="hint">mp3 / m4a / wav / aiff などを追加できます（30MB まで）。外部には送信しません。</p>
+    <div class="upload-row">
+      <input type="file" id="upload" accept="audio/*" multiple>
+      <span id="upload-status" class="hint"></span>
+    </div>
+    <div class="chip-grid" id="lib-user"></div>
+
+    <h2>システムサウンド</h2>
+    <p class="hint">macOS に入っている効果音です。</p>
+    <div class="chip-grid" id="lib-system"></div>
+  </section>
+
+  <!-- ===== 設定 ===== -->
+  <section class="panel" id="panel-settings">
+    <h2>全体の設定</h2>
+    <div class="form-grid">
+      <label class="field">
+        <span>既定の音量 <output id="vol-out"></output></span>
+        <input type="range" id="set-volume" min="0" max="1.5" step="0.05">
+      </label>
+      <label class="field">
+        <span>読み上げの声</span>
+        <select id="set-voice"></select>
+      </label>
+      <label class="field">
+        <span>話す速さ（words/分） <output id="rate-out"></output></span>
+        <input type="range" id="set-rate" min="90" max="400" step="10">
+      </label>
+    </div>
+
+    <h2>静音時間帯</h2>
+    <p class="hint">この時間帯に来た予定は鳴らさずに見送ります（深夜の誤作動対策）。</p>
+    <div class="form-grid">
+      <label class="check">
+        <input type="checkbox" id="quiet-enabled"> 静音時間帯を使う
+      </label>
+      <label class="field"><span>開始</span><input type="time" id="quiet-start"></label>
+      <label class="field"><span>終了</span><input type="time" id="quiet-end"></label>
+    </div>
+    <button class="btn btn-primary" id="save-settings">設定を保存</button>
+
+    <h2>この Mac について</h2>
+    <dl class="meta" id="about"></dl>
+  </section>
+
+  <!-- ===== ログ ===== -->
+  <section class="panel" id="panel-log">
+    <div class="section-head">
+      <h2>実行ログ</h2>
+      <button class="btn btn-quiet" id="reload-log">更新</button>
+    </div>
+    <ul class="log" id="log"></ul>
+  </section>
+</main>
+
+<!-- ===== 予定の編集ダイアログ ===== -->
+<dialog id="editor">
+  <form id="editor-form" method="dialog">
+    <header class="dlg-head">
+      <h2 id="editor-title">新しい予定</h2>
+      <button type="button" class="btn btn-quiet" id="editor-close" aria-label="閉じる">✕</button>
+    </header>
+
+    <div class="dlg-body">
+      <label class="field">
+        <span>名前</span>
+        <input type="text" id="f-name" required maxlength="80" placeholder="例）お出かけの時間">
+      </label>
+
+      <div class="field">
+        <span>繰り返し方</span>
+        <div class="segmented" id="f-kind">
+          <button type="button" data-kind="daily" class="is-active">曜日ごと</button>
+          <button type="button" data-kind="once">1回だけ</button>
+          <button type="button" data-kind="interval">一定間隔</button>
+        </div>
+      </div>
+
+      <div data-kind-for="daily once">
+        <label class="field"><span>時刻</span><input type="time" id="f-time" required></label>
+      </div>
+      <div data-kind-for="once">
+        <label class="field"><span>日付</span><input type="date" id="f-date"></label>
+      </div>
+      <div data-kind-for="daily interval">
+        <div class="field">
+          <span>曜日</span>
+          <div class="days" id="f-days"></div>
+          <div class="quick">
+            <button type="button" data-days="0,1,2,3,4">平日</button>
+            <button type="button" data-days="5,6">週末</button>
+            <button type="button" data-days="0,1,2,3,4,5,6">毎日</button>
+          </div>
+        </div>
+      </div>
+      <div data-kind-for="interval">
+        <div class="form-grid">
+          <label class="field"><span>何分ごと</span>
+            <input type="number" id="f-every" min="1" max="1440" value="60"></label>
+          <label class="field"><span>開始</span><input type="time" id="f-win-start" value="09:00"></label>
+          <label class="field"><span>終了</span><input type="time" id="f-win-end" value="21:00"></label>
+        </div>
+      </div>
+
+      <fieldset class="group">
+        <legend>鳴らすもの</legend>
+        <div class="segmented" id="f-atype">
+          <button type="button" data-atype="sound" class="is-active">サウンド</button>
+          <button type="button" data-atype="speak">読み上げ</button>
+          <button type="button" data-atype="both">サウンド＋読み上げ</button>
+        </div>
+
+        <div data-atype-for="sound both">
+          <label class="field"><span>サウンド</span>
+            <div class="row">
+              <select id="f-sound"></select>
+              <button type="button" class="btn btn-quiet" id="f-sound-test">▶ 試聴</button>
+            </div>
+          </label>
+        </div>
+        <div data-atype-for="speak both">
+          <label class="field"><span>読み上げる文章</span>
+            <textarea id="f-text" rows="2" maxlength="500" placeholder="例）お出かけの時間です"></textarea>
+          </label>
+          <div class="form-grid">
+            <label class="field"><span>声</span><select id="f-voice"></select></label>
+            <label class="field"><span>速さ <output id="f-rate-out"></output></span>
+              <input type="range" id="f-rate" min="90" max="400" step="10" value="180"></label>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <label class="field"><span>音量 <output id="f-vol-out"></output></span>
+            <input type="range" id="f-volume" min="0" max="1.5" step="0.05" value="0.6"></label>
+          <label class="field"><span>繰り返し</span>
+            <input type="number" id="f-repeat" min="1" max="10" value="1"></label>
+        </div>
+      </fieldset>
+
+      <fieldset class="group">
+        <legend>事前の予告</legend>
+        <p class="hint">出発前などに、先に短い合図を鳴らします。</p>
+        <div class="quick" id="lead-quick"></div>
+        <div class="chips" id="lead-chips"></div>
+        <div data-leads-only>
+          <label class="field"><span>予告のサウンド</span>
+            <div class="row">
+              <select id="f-lead-sound"></select>
+              <button type="button" class="btn btn-quiet" id="f-lead-test">▶ 試聴</button>
+            </div>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="f-lead-speak"> 「あと○分です」と読み上げる
+          </label>
+        </div>
+      </fieldset>
+
+      <label class="field"><span>メモ（任意）</span>
+        <input type="text" id="f-note" maxlength="200" placeholder="自分用のメモ"></label>
+
+      <p class="form-error" id="editor-error" hidden></p>
+    </div>
+
+    <footer class="dlg-foot">
+      <button type="button" class="btn btn-quiet" id="editor-cancel">キャンセル</button>
+      <button type="button" class="btn btn-primary" id="editor-save">保存</button>
+    </footer>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>
