@@ -2,6 +2,7 @@
 
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -14,9 +15,11 @@ from sounder import config, scheduler  # noqa: E402
 class FakePlayer:
     def __init__(self):
         self.played = []
+        self.queued = []
 
-    def play(self, action, *, settings, label=""):
+    def play(self, action, *, settings, label="", queue=False):
         self.played.append((label, action))
+        self.queued.append(queue)
 
     def stop(self):
         pass
@@ -46,6 +49,16 @@ class Base(unittest.TestCase):
 
 
 class TestFiring(Base):
+    def test_scheduled_sounds_are_queued_not_cut(self):
+        """同じ時刻に複数鳴るとき、後から来たものが前のものを消さないこと。"""
+        self.add(name="A", time="08:30")
+        self.add(name="B", time="08:30")
+        t = datetime(2026, 9, 21, 8, 29, 59)
+        self.sched._last_tick = t
+        self.sched.tick(t + timedelta(seconds=1))
+        self.assertEqual(len(self.player.played), 2)
+        self.assertEqual(self.player.queued, [True, True])
+
     def test_fires_once_at_the_right_second(self):
         self.add(time="08:30")
         t = datetime(2026, 9, 21, 8, 29, 59)
@@ -149,3 +162,63 @@ class TestFiring(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLoopRobustness(Base):
+    def test_tick_error_is_logged_and_the_loop_survives(self):
+        def boom():
+            raise RuntimeError("こわれた")
+        self.store.schedules = boom
+        self.sched.start()
+        try:
+            for _ in range(100):
+                if any(lv == "error" for lv, _m in self.msgs):
+                    break
+                time.sleep(0.05)
+        finally:
+            self.sched.stop()
+        self.assertTrue(any("スケジューラでエラー" in m for _lv, m in self.msgs))
+
+    def test_start_and_stop(self):
+        self.add(time="08:30")
+        self.sched.start()
+        time.sleep(0.05)
+        self.sched.stop()
+        self.assertEqual(self.player.played, [])
+
+    def test_already_fired_keys_are_skipped(self):
+        s = self.add(time="08:30")
+        when = datetime(2026, 9, 21, 8, 30)
+        self.sched._fired.add(f"{s['id']}|{when.isoformat()}|main0")
+        self.sched._last_tick = when - timedelta(seconds=1)
+        self.sched.tick(when)
+        self.assertEqual(self.player.played, [])
+
+    def test_fired_keys_are_pruned(self):
+        self.sched._fired = {f"k{i}" for i in range(4001)}
+        self.sched._last_tick = datetime(2026, 9, 21, 8, 0)
+        self.sched.tick(datetime(2026, 9, 21, 8, 0, 1))
+        self.assertEqual(len(self.sched._fired), 1000)
+
+    def test_once_that_vanishes_before_being_disabled(self):
+        """鳴らした直後に消された単発予定でも落ちないこと。"""
+        s = self.add(kind="once", date="2026-09-21", time="08:30", days=None)
+
+        def gone(_sid, _changes):
+            raise KeyError("もういない")
+        self.store.patch = gone
+        t = datetime(2026, 9, 21, 8, 29, 59)
+        self.sched._last_tick = t
+        self.sched.tick(t + timedelta(seconds=1))
+        self.assertEqual(len(self.player.played), 1)
+
+
+class TestLeadActionFallback(Base):
+    def test_lead_without_a_lead_action_uses_a_default_sound(self):
+        s = self.add(time="08:30", lead_times=[5])
+        self.store._data["schedules"][0]["lead_action"] = None  # 古い設定ファイル相当
+        t = datetime(2026, 9, 21, 8, 24, 59)
+        self.sched._last_tick = t
+        self.sched.tick(t + timedelta(seconds=1))
+        _label, action = self.player.played[0]
+        self.assertEqual(action["sound"], "builtin:melody_notice")

@@ -1,1673 +1,1057 @@
 'use strict';
 
-const DAYS = ['月', '火', '水', '木', '金', '土', '日'];
-const DAY_NAMES = ['月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日', '日曜日'];
-const LEAD_CHOICES = [1, 3, 5, 10, 15, 20, 30, 45, 60];
-const SOUND_GROUPS = [['内蔵', 'builtin'], ['自分のファイル', 'user'], ['システム', 'system']];
-const LOG_LABELS = { fired: '再生', error: 'エラー', missed: '取りこぼし', skipped: 'スキップ', test: '試聴', info: '情報' };
+/* 画面の組み立て。純関数は lib.js（SL）に置いている。 */
 
-let state = {
+var state = {
   settings: {}, schedules: [], sounds: { builtin: [], user: [], system: [] },
-  voices: [], next_events: [], log: [], builtin_labels: {}, playing: false,
+  voices: [], next_events: [], log: [], started_at: null,
 };
-let editing = null;   // 編集中のスケジュール id（新規は null）
-let draft = null;     // 編集中の下書き
-let currentTab = 'schedules';
-const scrollByTab = {};
+var weekStartISO = SL.isoDate(SL.weekStart(new Date()));
+var weekDays = [];
+var filter = 'all';
+var draft = null;      // 編集中の予定
+var editingId = null;  // 既存を編集しているときだけ id
+var daySheetDate = null;
 
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+var $ = function (s) { return document.querySelector(s); };
+var $$ = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
 
-// ---------------------------------------------------------------- アイコン（固定の SVG。ユーザ文字列は入れない）
-
-const SVG_NS = 'http://www.w3.org/2000/svg';
-const ICONS = {
-  bell: { d: ['M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z', 'M10 21h4'], sw: 1.8 },
-  power: { d: ['M12 3v8', 'M6.3 7a8 8 0 1 0 11.4 0'], sw: 2 },
-  moon: { d: ['M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z'], sw: 1.8 },
-  play: { d: ['M7 4l13 8-13 8z'], fill: true },
-  stop: { rect: true, fill: true },
-  check: { d: ['M5 12.5l4.5 4.5L19 7.5'], sw: 2.4 },
-  chev: { d: ['M9 6l6 6-6 6'], sw: 2.4 },
-  plus: { d: ['M12 5v14', 'M5 12h14'], sw: 2.2 },
-  minus: { d: ['M6 12h12'], sw: 2.6 },
-};
-
-function icon(name, size = 16, cls = '') {
-  const def = ICONS[name];
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('width', size);
-  svg.setAttribute('height', size);
-  svg.setAttribute('aria-hidden', 'true');
-  if (cls) svg.setAttribute('class', cls);
-  if (def.fill) {
-    svg.setAttribute('fill', 'currentColor');
-  } else {
-    svg.setAttribute('fill', 'none');
-    svg.setAttribute('stroke', 'currentColor');
-    svg.setAttribute('stroke-width', def.sw);
-    svg.setAttribute('stroke-linecap', 'round');
-    svg.setAttribute('stroke-linejoin', 'round');
-  }
-  if (def.rect) {
-    const r = document.createElementNS(SVG_NS, 'rect');
-    for (const [k, v] of Object.entries({ x: 6, y: 6, width: 12, height: 12, rx: 2 })) r.setAttribute(k, v);
-    svg.append(r);
-  }
-  for (const d of def.d || []) {
-    const p = document.createElementNS(SVG_NS, 'path');
-    p.setAttribute('d', d);
-    svg.append(p);
-  }
-  return svg;
-}
-
-/** 要素を作る小さなヘルパ。文字列は必ず textContent で入れる。 */
 function el(tag, cls, text) {
-  const e = document.createElement(tag);
+  var e = document.createElement(tag);
   if (cls) e.className = cls;
-  if (text !== undefined && text !== null) e.textContent = text;
+  if (text != null) e.textContent = text;
   return e;
 }
 
-// 日本語の文を意味のまとまり（parts）ごとに折り返すための要素。
-// まとまりの途中では改行せず、まとまりの間でだけ折り返す（1つが長すぎる場合だけ中で折り返す）。
-function phrased(tag, cls, parts) {
-  const e = el(tag, cls);
-  for (const p of parts) {
-    if (!p) continue;
-    // 先頭の空白は inline-block の中だと消えるので、まとまりの外（折り返し可能な位置）に出す
-    if (/^\s/.test(p) && e.childNodes.length) e.append(' ');
-    e.append(el('span', 'ph', p.trim()));
-  }
-  return e;
-}
-
-function mkSwitch(checked, label, onChange) {
-  const b = el('button', 'switch');
-  b.type = 'button';
-  b.setAttribute('role', 'switch');
-  b.setAttribute('aria-label', label);
-  setSwitch(b, checked);
-  b.addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    const next = b.getAttribute('aria-checked') !== 'true';
-    setSwitch(b, next);
-    onChange(next, b);
-  });
-  return b;
-}
-
-function setSwitch(b, on) { b.setAttribute('aria-checked', on ? 'true' : 'false'); }
-function isOn(b) { return b.getAttribute('aria-checked') === 'true'; }
-
-function chevCell(label, value, onClick) {
-  const b = el('button', 'cell cell-link');
-  b.type = 'button';
-  b.append(el('span', 'cell-label', label));
-  if (value !== undefined) b.append(el('span', 'cell-value', value));
-  b.append(icon('chev', 14, 'chev'));
-  b.addEventListener('click', onClick);
-  return b;
-}
-
-function checkCell(label, checked, onClick, sub) {
-  const b = el('button', 'cell check-cell');
-  b.type = 'button';
-  b.setAttribute('role', 'menuitemradio');
-  b.setAttribute('aria-checked', checked ? 'true' : 'false');
-  const lab = el('span', 'cell-label', label);
-  if (sub) { lab.append(document.createElement('br'), el('span', 'cell-sub', sub)); }
-  b.append(lab, icon('check', 20, 'check'));
-  b.addEventListener('click', onClick);
-  return b;
-}
-
-function setRangeFill(input) {
-  const min = Number(input.min || 0), max = Number(input.max || 100);
-  const pct = ((Number(input.value) - min) / (max - min)) * 100;
-  input.style.setProperty('--pct', `${pct}%`);
-}
-
-// ---------------------------------------------------------------- 通信
+// ------------------------------------------------------------------ 通信
 
 async function api(method, path, body) {
-  const opt = { method, headers: {} };
+  var opt = { method: method, headers: {} };
   if (body !== undefined) {
     opt.headers['Content-Type'] = 'application/json';
     opt.body = JSON.stringify(body);
   }
-  let res;
+  var res;
   try {
     res = await fetch(path, opt);
   } catch (e) {
     throw new Error('サーバに接続できませんでした');
   }
-  const text = await res.text();
-  let data = {};
-  if (text) { try { data = JSON.parse(text); } catch { /* 空でよい */ } }
-  if (!res.ok) throw new Error(data.error || `エラー (${res.status})`);
+  var text = await res.text();
+  var data = {};
+  if (text) { try { data = JSON.parse(text); } catch (e) { /* 空でよい */ } }
+  if (!res.ok) throw new Error(data.error || ('エラー (' + res.status + ')'));
   return data;
 }
 
-let toastTimer = null;
+var toastTimer = null;
 function toast(msg, isError) {
-  const t = $('#toast');
-  // <dialog> はトップレイヤーに出るので、開いているならその中に入れる
-  const host = $('dialog[open]') || document.body;
-  if (t.parentElement !== host) host.append(t);
+  var t = $('#toast');
   t.textContent = msg;
   t.classList.toggle('is-error', !!isError);
   t.hidden = false;
-  t.style.animation = 'none';
-  void t.offsetWidth;
-  t.style.animation = '';
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, isError ? 5000 : 1800);
+  toastTimer = setTimeout(function () { t.hidden = true; }, isError ? 5000 : 2000);
 }
 
-// ---------------------------------------------------------------- 確認（iOS 風アクションシート）
+function fail(e) { toast(e.message || String(e), true); }
 
-let asResolve = null;
-function confirmSheet(title, okLabel) {
-  const d = $('#actionsheet');
-  $('#as-title').textContent = title;
-  $('#as-ok').textContent = okLabel;
-  if (asResolve) asResolve(false);
-  return new Promise((resolve) => {
-    asResolve = resolve;
-    d.showModal();
-  });
+// ------------------------------------------------------------------ 画面の切り替え
+
+var VIEWS = ['week', 'list', 'sounds', 'settings'];
+
+function setView(name, keepHash) {
+  if (VIEWS.indexOf(name) < 0) name = 'week';
+  if (!keepHash) location.hash = name === 'week' ? '' : name;
+  $$('.tab').forEach(function (t) { t.classList.toggle('is-active', t.dataset.view === name); });
+  $$('.view').forEach(function (v) { v.classList.toggle('is-active', v.id === 'view-' + name); });
+  $('#fab').hidden = (name !== 'week' && name !== 'list');
+  window.scrollTo(0, 0);
 }
 
-function closeSheet(result) {
-  const d = $('#actionsheet');
-  if (d.open) d.close();
-  if (asResolve) { const r = asResolve; asResolve = null; r(result); }
-}
+// ------------------------------------------------------------------ 週カレンダー
 
-// ---------------------------------------------------------------- 表示用の整形
-
-const pad = (n) => String(n).padStart(2, '0');
-const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const hmOf = (d) => `${d.getHours()}:${pad(d.getMinutes())}`;
-const hhmmOf = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-const wd = (d) => DAYS[(d.getDay() + 6) % 7];
-/** "08:05" → "8:05" */
-const shortHM = (hhmm) => (hhmm || '').replace(/^0(\d)/, '$1');
-
-function parseDate(ymd) {
-  const [y, m, d] = ymd.split('-').map(Number);
-  return new Date(y, m - 1, d);
-}
-
-function fmtWhen(iso) {
-  const d = new Date(iso);
-  const today = new Date();
-  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
-  if (d.toDateString() === today.toDateString()) return hhmmOf(d);
-  if (d.toDateString() === tomorrow.toDateString()) return `明日 ${hhmmOf(d)}`;
-  return `${d.getMonth() + 1}/${d.getDate()}（${wd(d)}）${hhmmOf(d)}`;
-}
-
-function fmtRelative(iso) {
-  const ms = new Date(iso) - new Date();
-  if (ms < 0) return '';
-  const min = Math.floor(ms / 60000);
-  if (min < 1) return 'あと1分未満';
-  if (min < 60) return `あと${min}分`;
-  const h = Math.floor(min / 60);
-  if (h < 24) return `あと${h}時間${min % 60 ? (min % 60) + '分' : ''}`;
-  return `あと${Math.floor(h / 24)}日`;
-}
-
-function fmtTs(ts) {
-  return (ts || '').replace('T', ' ').slice(5, 16);
-}
-
-function soundLabel(ref) {
-  if (!ref) return '—';
-  for (const group of ['builtin', 'user', 'system']) {
-    const hit = (state.sounds[group] || []).find((s) => s.ref === ref);
-    if (hit) return hit.label;
-  }
-  return state.builtin_labels[ref] || ref.replace(/^[a-z]+:/, '');
-}
-
-function daysLabel(days) {
-  const k = (days || []).join(',');
-  if (k === '0,1,2,3,4,5,6') return '毎日';
-  if (k === '0,1,2,3,4') return '平日';
-  if (k === '5,6') return '週末';
-  if (!days || !days.length) return '曜日なし';
-  return days.map((d) => DAYS[d]).join('・');
-}
-
-function onceLabel(ymd) {
-  if (!ymd) return '';
-  const d = parseDate(ymd);
-  return `${d.getMonth() + 1}/${d.getDate()}（${wd(d)}）`;
-}
-
-function leadLabel(leads) {
-  return (leads || []).map((m) => `${m}分前`).join('・');
-}
-
-function whatParts(a) {
-  a = a || {};
-  const parts = [];
-  if (a.type === 'sound') parts.push(soundLabel(a.sound));
-  else if (a.type === 'both') parts.push(soundLabel(a.sound), '＋読み上げ');
-  else if (a.type === 'speak') parts.push('読み上げ', `「${a.text || ''}」`);
-  if (a.repeat > 1) parts.push(` ×${a.repeat}`);
-  return parts;
-}
-
-function inQuiet(settings, d) {
-  const q = settings.quiet_hours || {};
-  if (!q.enabled || !q.start || !q.end) return false;
-  const toMin = (s) => { const [h, m] = s.split(':').map(Number); return h * 60 + m; };
-  const s = toMin(q.start), e = toMin(q.end), c = d.getHours() * 60 + d.getMinutes();
-  if (s === e) return false;
-  return s < e ? (s <= c && c < e) : (c >= s || c < e);
-}
-
-// ---------------------------------------------------------------- 予定（ホーム）
-
-function renderBanner() {
-  const box = $('#banner');
-  box.textContent = '';
-  box.className = 'banner';
-  const st = state.settings;
-
-  if (st.master_enabled === false) {
-    box.classList.add('is-off');
-    const tile = el('span', 'tile');
-    tile.append(icon('power', 22));
-    const text = el('div', 'banner-text');
-    text.append(phrased('span', 'banner-main', ['全体がオフです']), phrased('span', 'banner-sub', ['予定は鳴りません']));
-    const on = el('button', 'pill-btn', 'オンにする');
-    on.type = 'button';
-    on.addEventListener('click', () => setMaster(true));
-    box.append(tile, text, on);
-    return;
-  }
-
-  const tile = el('span', 'tile');
-  tile.append(icon('bell', 22));
-  const text = el('div', 'banner-text');
-  const next = state.next_events[0];
-  if (next) {
-    const rel = fmtRelative(next.at);
-    const when = fmtWhen(next.at);
-    const sub = new Date(next.at) - new Date() < 86400000 && rel ? `次は ${rel} · ${when}` : `次は ${when}`;
-    const main = next.tag === 'lead' ? [next.name, `（${next.lead}分前の予告）`] : [next.name];
-    text.append(phrased('span', 'banner-sub', sub.split(/(?= · )/)), phrased('span', 'banner-main', main));
-  } else {
-    text.append(el('span', 'banner-sub', '次の予定'), el('span', 'banner-main', 'いまは鳴る予定がありません'));
-  }
-  const q = st.quiet_hours || {};
-  if (inQuiet(st, new Date())) {
-    text.append(el('span', 'banner-note', `静音時間帯（${shortHM(q.start)}〜${shortHM(q.end)}）`));
-  }
-  const stop = el('button', 'round-btn' + (state.playing ? ' is-playing' : ''));
-  stop.type = 'button';
-  stop.setAttribute('aria-label', state.playing ? '鳴っている音を止める（再生中）' : '鳴っている音を止める');
-  stop.append(icon('stop', 16));
-  stop.addEventListener('click', stopSound);
-  box.append(tile, text, stop);
-}
-
-function sortKey(s) {
-  if (s.kind === 'once') return `${s.date} ${s.time}`;
-  if (s.kind === 'interval') return (s.window || {}).start || '';
-  return s.time || '';
-}
-
-let editMode = false;
-
-function renderSchedules() {
-  const box = $('#sched-groups');
-  box.textContent = '';
-  box.classList.toggle('is-editing', editMode);
-  const n = state.schedules.length;
-  $('#sched-empty').hidden = n > 0;
-  $('#edit-btn').hidden = n === 0;
-  if (!n && editMode) setEditMode(false);
-
-  const sections = [['くり返し', 'daily'], ['一定間隔', 'interval'], ['1回だけ', 'once']];
-  for (const [title, kind] of sections) {
-    const rows = state.schedules.filter((s) => s.kind === kind)
-      .sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
-    if (!rows.length) continue;
-    const block = el('section', 'group-block');
-    block.append(el('h2', 'group-head', title));
-    const group = el('div', 'group');
-    for (const s of rows) group.append(alarmRow(s));
-    block.append(group);
-    box.append(block);
-  }
-}
-
-function alarmRow(s) {
-  const row = el('div', 'alarm' + (s.enabled ? '' : ' is-off'));
-
-  const del = el('button', 'alarm-del');
-  del.type = 'button';
-  del.setAttribute('aria-label', `${s.name}を削除`);
-  const dot = el('span');
-  dot.append(icon('minus', 14));
-  del.append(dot);
-  del.addEventListener('click', () => removeSchedule(s));
-
-  const main = el('button', 'alarm-main');
-  main.type = 'button';
-  let time, labelParts;
-  if (s.kind === 'interval') {
-    time = `${shortHM(s.window.start)} – ${shortHM(s.window.end)}`;
-    labelParts = [s.name, ` · ${s.every_minutes}分ごと`, ` · ${daysLabel(s.days)}`];
-  } else if (s.kind === 'once') {
-    time = `${onceLabel(s.date)}${shortHM(s.time)}`;
-    labelParts = [s.name];
-  } else {
-    time = shortHM(s.time);
-    labelParts = [s.name, ` · ${daysLabel(s.days)}`];
-  }
-  const label = labelParts.join('');
-  main.append(el('span', 'alarm-time' + (s.kind === 'daily' ? '' : ' is-mid'), time));
-  main.append(phrased('span', 'alarm-label', labelParts));
-  const detailParts = whatParts(s.action);
-  if (s.lead_times && s.lead_times.length) detailParts.push(` · ${leadLabel(s.lead_times)}に予告`);
-  const detail = detailParts.join('');
-  main.append(phrased('span', 'alarm-detail', detailParts));
-  if (s.note) main.append(el('span', 'alarm-note', s.note));
-  main.setAttribute('aria-label', `${time} ${label}。${detail}。タップで編集`);
-  main.addEventListener('click', () => openEditor(s));
-
-  const dup = el('button', 'alarm-dup', '複製');
-  dup.type = 'button';
-  dup.setAttribute('aria-label', `${s.name}を複製`);
-  dup.addEventListener('click', () => duplicate(s));
-
-  const sw = mkSwitch(!!s.enabled, `${s.name}を有効にする`, (on, b) => toggleSchedule(s, on, b));
-
-  row.append(del, main, dup, sw);
-  return row;
-}
-
-function setEditMode(on) {
-  editMode = on;
-  $('#edit-btn').textContent = on ? '完了' : '編集';
-  $('#edit-btn').classList.toggle('is-bold', on);
-  $('#sched-groups').classList.toggle('is-editing', on);
-}
-
-function renderEmptyPresets() {
-  const box = $('#empty-presets');
-  box.textContent = '';
-  for (const p of PRESETS) {
-    const b = el('button', 'cell preset-cell');
-    b.type = 'button';
-    const lab = el('span', 'cell-label');
-    lab.append(el('b', null, p.title), el('small', null, p.desc));
-    b.append(lab, icon('chev', 14, 'chev'));
-    b.addEventListener('click', () => openEditor(p.make(), { asNew: true, presets: true }));
-    box.append(b);
-  }
-}
-
-// ---------------------------------------------------------------- サウンド
-
-let soundEdit = false;
-let playingRef = null;
-
-function renderSounds() {
-  const box = $('#sound-groups');
-  box.textContent = '';
-  box.classList.toggle('is-editing', soundEdit);
-  const hasUser = (state.sounds.user || []).length > 0;
-  $('#sound-edit-btn').hidden = !hasUser;
-  if (!hasUser && soundEdit) setSoundEdit(false);
-
-  const notes = {
-    builtin: 'この Mac の中で生成した音です。タップで試聴できます。',
-    user: 'mp3 / m4a / wav / aiff など（30MB まで）。外部には送信しません。',
-    system: 'macOS に入っている効果音です。',
-  };
-  for (const [title, key] of SOUND_GROUPS) {
-    const items = state.sounds[key] || [];
-    if (!items.length && key !== 'user') continue;
-    const block = el('section', 'group-block');
-    block.append(el('h2', 'group-head', title));
-    const group = el('div', 'group');
-    for (const s of items) group.append(soundRow(s, key === 'user'));
-    if (key === 'user') group.append(addFileRow());
-    block.append(group, el('p', 'footnote', notes[key]));
-    box.append(block);
-  }
-}
-
-function soundRow(s, deletable) {
-  const row = el('div', 'cell sound-row' + (playingRef === s.ref ? ' is-playing' : ''));
-  row.dataset.ref = s.ref;
-  if (deletable) {
-    const del = el('button', 'alarm-del');
-    del.type = 'button';
-    del.setAttribute('aria-label', `${s.label}を削除`);
-    const dot = el('span');
-    dot.append(icon('minus', 14));
-    del.append(dot);
-    del.addEventListener('click', () => deleteSound(s));
-    row.append(del);
-  }
-  const play = el('button', 'sound-play');
-  play.type = 'button';
-  const playing = playingRef === s.ref;
-  play.setAttribute('aria-label', `${s.label}を${playing ? '止める' : '試聴'}`);
-  const dot = el('span', 'play-dot');
-  dot.append(icon(playing ? 'stop' : 'play', 14));
-  play.append(dot, el('span', 'name', s.label));
-  play.addEventListener('click', () => {
-    if (playingRef === s.ref) stopSound();
-    else preview(s.ref);
-  });
-  row.append(play);
-  return row;
-}
-
-let uploadStatus = '';
-function addFileRow() {
-  const b = el('button', 'cell add-cell');
-  b.type = 'button';
-  const dot = el('span', 'play-dot');
-  dot.append(icon('plus', 16));
-  b.append(dot, el('span', 'cell-label', 'ファイルを追加'));
-  if (uploadStatus) b.append(el('span', 'cell-value', uploadStatus));
-  b.disabled = !!uploadStatus && uploadStatus.endsWith('…');
-  b.addEventListener('click', () => $('#upload').click());
-  return b;
-}
-
-function setSoundEdit(on) {
-  soundEdit = on;
-  $('#sound-edit-btn').textContent = on ? '完了' : '編集';
-  $('#sound-edit-btn').classList.toggle('is-bold', on);
-  $('#sound-groups').classList.toggle('is-editing', on);
-}
-
-function markPlaying(ref) {
-  playingRef = ref;
-  renderSounds();
-  if (ref) watchPlaying();
-}
-
-let playWatch = null;
-function watchPlaying() {
-  clearTimeout(playWatch);
-  const started = Date.now();
-  const check = async () => {
-    try {
-      const data = await api('GET', '/api/now');
-      applyNow(data);
-      if (!data.playing && Date.now() - started > 1200) { playingRef = null; renderSounds(); return; }
-    } catch { /* 次で見る */ }
-    if (Date.now() - started < 10 * 60 * 1000) playWatch = setTimeout(check, 1500);
-  };
-  playWatch = setTimeout(check, 700);
-}
-
-// ---------------------------------------------------------------- 設定
-
-function renderSettings() {
-  const st = state.settings;
-  setSwitch($('#master'), st.master_enabled !== false);
-  $('#set-volume').value = st.default_volume ?? 0.6;
-  $('#vol-out').textContent = Math.round((st.default_volume ?? 0.6) * 100) + '%';
-  $('#set-rate').value = st.speak_rate ?? 180;
-  $('#rate-out').textContent = st.speak_rate ?? 180;
-  setRangeFill($('#set-volume'));
-  setRangeFill($('#set-rate'));
-  const q = st.quiet_hours || {};
-  setSwitch($('#quiet-enabled'), !!q.enabled);
-  $('#quiet-start').value = q.start || '23:00';
-  $('#quiet-end').value = q.end || '07:00';
-  $('#set-voice-val').textContent = st.default_voice || 'システム既定';
-  if (!$('#push-voice').hidden) renderVoiceList($('#set-voice-list'), st.default_voice, (v) => saveSettings({ default_voice: v }));
-}
-
-async function saveSettings(patch, okMsg) {
+async function loadWeek() {
   try {
-    const data = await api('PUT', '/api/settings', patch);
-    state.settings = data.settings;
-    renderSettings();
-    renderBanner();
-    if (okMsg) toast(okMsg);
-    if (currentTab === 'timeline') loadTimeline(false);
-  } catch (e) {
-    toast(e.message, true);
-    renderSettings();
-  }
-}
-
-function setMaster(on) {
-  return saveSettings({ master_enabled: on }, on ? '全体をオンにしました' : '全体をオフにしました');
-}
-
-function renderVoiceList(box, chosen, onPick, firstTitle) {
-  box.textContent = '';
-  const mk = (title, items) => {
-    const block = el('div', 'group-block');
-    if (title) block.append(el('h3', 'group-head', title));
-    const g = el('div', 'group');
-    for (const [value, label, sub] of items) {
-      const cell = checkCell(label, (chosen || '') === value, () => {
-        for (const c of box.querySelectorAll('.check-cell')) c.setAttribute('aria-checked', 'false');
-        cell.setAttribute('aria-checked', 'true');
-        onPick(value);
-      }, sub);
-      g.append(cell);
-    }
-    block.append(g);
-    box.append(block);
-  };
-  mk(firstTitle || null, [['', 'システム既定']]);
-  const ja = state.voices.filter((v) => v.locale.startsWith('ja'));
-  const other = state.voices.filter((v) => !v.locale.startsWith('ja'));
-  if (ja.length) mk('日本語', ja.map((v) => [v.name, v.name, v.locale]));
-  if (other.length) mk('その他の言語', other.map((v) => [v.name, v.name, v.locale]));
-  if (!state.voices.length) {
-    box.append(el('p', 'footnote', 'この環境では読み上げの声の一覧を取得できませんでした。'));
-  }
-}
-
-function renderLog() {
-  const box = $('#log');
-  box.textContent = '';
-  if (!state.log.length) {
-    const c = el('div', 'cell');
-    c.append(el('span', 'cell-label', 'まだ記録がありません'));
-    box.append(c);
-    return;
-  }
-  for (const e of state.log) {
-    const row = el('div', 'cell log-row');
-    row.append(el('span', 'badge lv-' + e.level, LOG_LABELS[e.level] || e.level),
-      el('span', 'log-ts', fmtTs(e.ts)), el('span', 'log-msg', e.message));
-    box.append(row);
-  }
-}
-
-async function loadLog() {
-  try {
-    const data = await api('GET', '/api/log?limit=200');
-    state.log = data.log;
-    renderLog();
-  } catch (e) { toast(e.message, true); }
-}
-
-function renderAbout() {
-  const box = $('#about');
-  box.textContent = '';
-  const rows = [
-    ['接続先', location.origin],
-    ['サーバ起動', state.started_at ? state.started_at.replace('T', ' ').slice(0, 16) : '—'],
-    ['内蔵サウンド', `${state.sounds.builtin.length} 種類`],
-    ['読み上げ音声', `${state.voices.length} 種類`],
-    ['通信', 'この Mac の中だけ'],
-  ];
-  for (const [k, v] of rows) {
-    const c = el('div', 'cell');
-    c.append(el('span', 'cell-label', k), el('span', 'cell-value', v));
-    box.append(c);
-  }
-}
-
-// ---------------------------------------------------------------- 子画面（設定タブ内）
-
-function openPush(id) {
-  const p = $(id);
-  p.classList.remove('is-leaving');
-  p.hidden = false;
-  const back = p.querySelector('[data-back]');
-  setTimeout(() => back && back.focus({ preventScroll: true }), 50);
-}
-
-function closePush(p) {
-  if (p.hidden) return;
-  p.classList.add('is-leaving');
-  setTimeout(() => { p.hidden = true; p.classList.remove('is-leaving'); }, 200);
-}
-
-// ---------------------------------------------------------------- タイムライン
-
-const PX_PER_MIN = 72 / 60;
-let tlWeekStart = mondayOf(new Date());
-let tlDay = isoDate(new Date());
-let tlEvents = {};          // 'YYYY-MM-DD' → events
-let tlFetchedAt = 0;
-let tlLayout = null;        // { yOf }
-let tlMinute = null;        // 現在線を描いた時刻（分）
-
-function mondayOf(d) {
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
-  return x;
-}
-
-async function loadTimeline(scroll) {
-  const start = isoDate(tlWeekStart);
-  try {
-    const data = await api('GET', `/api/timeline?date=${start}&days=7`);
-    if (start !== isoDate(tlWeekStart)) return; // 取得中に週が変わった
-    tlEvents = {};
-    for (const e of data.events) (tlEvents[e.at.slice(0, 10)] ||= []).push(e);
-    tlFetchedAt = Date.now();
-    renderTimeline(scroll);
-  } catch (e) { toast(e.message, true); }
+    var data = await api('GET', '/api/calendar?start=' + weekStartISO + '&days=7');
+    weekDays = data.days;
+    renderWeek();
+    renderToday();
+  } catch (e) { fail(e); }
 }
 
 function renderWeek() {
-  const box = $('#tl-week');
-  box.textContent = '';
-  const today = isoDate(new Date());
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(tlWeekStart.getFullYear(), tlWeekStart.getMonth(), tlWeekStart.getDate() + i);
-    const key = isoDate(d);
-    const b = el('button', 'day' + (key === today ? ' is-today' : ''));
-    b.type = 'button';
-    b.setAttribute('aria-pressed', key === tlDay ? 'true' : 'false');
-    // 点は「その日に鳴る予定の数」（時報のような一定間隔は 1 つと数える）
-    const mains = new Set((tlEvents[key] || []).filter((e) => e.tag === 'main' && e.enabled)
-      .map((e) => e.schedule_id)).size;
-    b.setAttribute('aria-label', `${d.getMonth() + 1}月${d.getDate()}日（${DAYS[i]}）${mains ? `、予定${mains}件` : ''}`);
-    b.append(el('span', 'w', DAYS[i]), el('span', 'n', String(d.getDate())),
-      el('span', 'dots', '•'.repeat(Math.min(mains, 4))));
-    b.addEventListener('click', () => { tlDay = key; renderTimeline(true); });
-    box.append(b);
-  }
-}
+  $('#week-label').textContent = SL.weekRangeLabel(weekStartISO);
+  var box = $('#week');
+  box.innerHTML = '';
+  var thisWeek = SL.isoDate(SL.weekStart(new Date()));
 
-function renderTlTitle() {
-  const d = parseDate(tlDay);
-  $('#tl-month').textContent = `${d.getFullYear()}年${d.getMonth() + 1}月`;
-  const now = new Date();
-  $('#tl-day').textContent = tlDay === isoDate(now)
-    ? `今日 · ${hmOf(now)}`
-    : `${d.getMonth() + 1}月${d.getDate()}日（${wd(d)}）`;
-  $('#tl-today').hidden = tlDay === isoDate(now);
-}
+  weekDays.forEach(function (d) {
+    var cell = el('div', 'wday');
+    cell.setAttribute('role', 'gridcell');
+    if (d.is_today) cell.classList.add('is-today');
+    if (d.weekday >= 5) cell.classList.add('is-weekend');
+    if (weekStartISO !== thisWeek) cell.classList.add('is-other');
 
-function eventState(e) {
-  // 過ぎた予定はログの結果、これからの予定は鳴らない理由を返す
-  if (e.past) {
-    if (e.result === 'fired') return ['再生しました', false];
-    if (e.result === 'skipped') {
-      if (e.quiet) return ['静音時間帯のためスキップしました', false];
-      return ['スキップしました', false];
+    var head = el('div', 'wday-head');
+    head.append(el('span', 'wday-dow', SL.DAYS[d.weekday]));
+    head.append(el('span', 'wday-num', String(d.day)));
+    cell.append(head);
+
+    var shown = d.events.slice(0, 4);
+    shown.forEach(function (ev) {
+      var b = el('button', 'ev');
+      b.type = 'button';
+      b.append(document.createTextNode(ev.time));
+      b.append(el('span', 'ev-name', ev.name));
+      if (ev.tag === 'lead') b.classList.add('is-lead');
+      if (!ev.enabled) b.classList.add('is-off');
+      if (ev.quiet) b.classList.add('is-quiet');
+      if (ev.past) b.classList.add('is-past');
+      b.title = ev.name + (ev.tag === 'lead' ? '（' + ev.lead + '分前の予告）' : '');
+      b.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openEditorById(ev.schedule_id);
+      });
+      cell.append(b);
+    });
+    if (d.events.length > shown.length) {
+      var more = el('button', 'ev-more', '+' + (d.events.length - shown.length));
+      more.type = 'button';
+      more.addEventListener('click', function (e) { e.stopPropagation(); openDay(d); });
+      cell.append(more);
     }
-    if (e.result === 'missed') return ['過ぎていたため鳴らしませんでした', false];
-    if (!e.enabled) return ['オフの予定', false];
-    return ['過ぎました', false];
-  }
-  if (!e.enabled) return ['オフの予定なので鳴りません', true];
-  if (!e.master) return ['全体がオフなので鳴りません', true];
-  if (e.quiet) return ['静音時間帯なので鳴りません', true];
-  return [null, false];
-}
-
-function renderTimeline(scroll) {
-  renderWeek();
-  renderTlTitle();
-  const axis = $('#tl-axis');
-  axis.textContent = '';
-  const events = tlEvents[tlDay] || [];
-  const byId = Object.fromEntries(state.schedules.map((s) => [s.id, s]));
-  const minOf = (iso) => { const d = new Date(iso); return d.getHours() * 60 + d.getMinutes(); };
-
-  // --- 描画するかたまりを作る
-  const items = [];
-  const leadsByMain = {};
-  for (const e of events) {
-    if (e.tag === 'lead') (leadsByMain[`${e.schedule_id}|${e.main_at}`] ||= []).push(e);
-  }
-  const chimeRows = {};
-  for (const e of events) {
-    if (e.tag === 'main' && e.kind === 'interval') {
-      const key = `${e.schedule_id}|${Math.floor(minOf(e.at) / 60)}`;
-      (chimeRows[key] ||= []).push(e);
-    } else if (e.tag === 'main') {
-      items.push({ min: minOf(e.at), node: tlCard(e, leadsByMain[`${e.schedule_id}|${e.at}`] || [], byId[e.schedule_id]) });
-    } else if (e.tag === 'lead' && e.kind !== 'interval' && e.main_at.slice(0, 10) !== tlDay) {
-      // 本番が翌日（0 時台）の予告は単独で出す
-      items.push({ min: minOf(e.at), node: tlLeadOnly(e, byId[e.schedule_id]) });
-    }
-  }
-  for (const rows of Object.values(chimeRows)) {
-    items.push({ min: minOf(rows[0].at), node: tlChimes(rows, byId[rows[0].schedule_id]) });
-  }
-  // 現在時刻の線も並びに入れて、カードと重ならないようにする
-  const now = new Date();
-  const isToday = tlDay === isoDate(now);
-  if (isToday) {
-    const n = el('div', 'tl-now');
-    n.append(el('span', null, hmOf(now)), el('i'));
-    items.push({ min: now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60, node: n, now: true });
-  }
-  items.sort((a, b) => a.min - b.min);
-  tlMinute = isToday ? hmOf(now) : null;
-
-  $('#tl-empty').hidden = events.length > 0;
-
-  // --- 高さを測ってから、重ならないように縦方向へずらす（ずれた分だけ時間軸も伸ばす）
-  const wraps = items.map((it) => {
-    const w = el('div', it.now ? 'tl-item tl-item-now' : 'tl-item');
-    w.style.visibility = 'hidden';
-    w.append(it.node);
-    axis.append(w);
-    return w;
+    cell.addEventListener('click', function () { openDay(d); });
+    box.append(cell);
   });
-  const heights = wraps.map((w) => w.offsetHeight);
-  const segs = [{ from: 0, shift: 0 }];
-  let cursor = -Infinity;
-  const GAP = 8;
-  items.forEach((it, i) => {
-    let shift = segs[segs.length - 1].shift;
-    const lift = it.now ? 10 : 14; // 時刻の位置からどれだけ上に出すか
-    const ideal = it.min * PX_PER_MIN + shift - lift;
-    if (ideal < cursor) {
-      shift += cursor - ideal;
-      segs.push({ from: it.min, shift });
-    }
-    const top = it.min * PX_PER_MIN + shift - lift;
-    wraps[i].style.top = `${top}px`;
-    wraps[i].style.visibility = '';
-    cursor = top + heights[i] + GAP;
-  });
-  const yOf = (min) => {
-    let shift = 0;
-    for (const s of segs) if (s.from <= min) shift = s.shift;
-    return min * PX_PER_MIN + shift;
-  };
-  const total = Math.max(yOf(24 * 60), cursor) + 24;
-  axis.style.height = `${total}px`;
-
-  const line = el('div', 'tl-line');
-  axis.prepend(line);
-  for (let h = 0; h <= 24; h++) {
-    const row = el('div', 'tl-hour');
-    row.style.top = `${yOf(h * 60)}px`;
-    row.append(el('span', null, `${h}:00`), el('i'));
-    axis.prepend(row);
-  }
-  for (const e of events) {
-    const dot = el('span', 'tl-dot' + (e.tag === 'lead' ? ' is-lead' : '') + (e.past ? ' is-past' : ''));
-    dot.style.top = `${yOf(minOf(e.at))}px`;
-    axis.append(dot);
-  }
-
-  tlLayout = { yOf };
-  if (scroll) scrollTimeline(events.length ? minOf(events[0].at) : 8 * 60);
 }
 
-/** 分が変わったら描き直す（現在線の位置と「あと○分」を更新） */
-function tickTimeline() {
-  if (currentTab !== 'timeline') return;
-  renderTlTitle();
-  if (tlMinute && tlMinute !== hmOf(new Date())) renderTimeline(false);
-}
-
-function scrollTimeline(fallbackMin) {
-  if (currentTab !== 'timeline' || !tlLayout) return;
-  const now = new Date();
-  const min = tlDay === isoDate(now) ? now.getHours() * 60 + now.getMinutes() : fallbackMin;
-  const axis = $('#tl-axis');
-  const head = $('.tl-head').offsetHeight;
-  const top = axis.getBoundingClientRect().top + window.scrollY + tlLayout.yOf(min);
-  window.scrollTo({ top: Math.max(0, top - head - 110), behavior: 'auto' });
-}
-
-function tlCard(e, leads, sched) {
-  const [msg, muted] = eventState(e);
-  const b = el('button', 'tl-card' + (e.past ? ' is-past' : '') + (muted ? ' is-muted' : ''));
-  b.type = 'button';
-  const top = el('div', 'tl-card-top');
-  top.append(el('span', 't', hmOf(new Date(e.at))), el('span', 'n', e.name));
-  if (!e.past && !muted) top.append(el('span', 'rel', fmtRelative(e.at)));
-  b.append(top);
-  if (sched) {
-    const a = sched.action || {};
-    const parts = a.type === 'both' ? [soundLabel(a.sound), `＋「${a.text || ''}」`] : whatParts(a);
-    b.append(phrased('span', 'tl-card-sub', parts));
-  }
-  if (leads.length) {
-    const pills = el('div', 'tl-pills');
-    for (const l of leads) pills.append(el('span', 'tl-pill-s', `${hmOf(new Date(l.at))} 予告`));
-    b.append(pills);
-  }
-  if (msg) b.append(el('span', 'tl-state', msg));
-  b.setAttribute('aria-label', `${hmOf(new Date(e.at))} ${e.name}${msg ? '、' + msg : ''}。タップで編集`);
-  b.addEventListener('click', () => sched && openEditor(sched));
-  return b;
-}
-
-function tlLeadOnly(e, sched) {
-  const [msg, muted] = eventState(e);
-  const wrap = el('div', 'tl-chimes');
-  const b = el('button', 'tl-chime' + (e.past ? ' is-past' : '') + (muted ? ' is-muted' : ''));
-  b.type = 'button';
-  b.append(icon('bell', 14), el('b', null, `${hmOf(new Date(e.at))} 予告`),
-    el('span', 'n', `${e.name}（${hmOf(new Date(e.main_at))}）`));
-  if (msg) b.title = msg;
-  b.addEventListener('click', () => sched && openEditor(sched));
-  wrap.append(b);
-  return wrap;
-}
-
-function tlChimes(rows, sched) {
-  const wrap = el('div', 'tl-chimes');
-  const mk = (label, e) => {
-    const [msg, muted] = eventState(e);
-    const b = el('button', 'tl-chime' + (e.past ? ' is-past' : '') + (muted ? ' is-muted' : ''));
+function renderStartHere() {
+  var box = $('#start-here');
+  box.hidden = state.schedules.length > 0;
+  if (box.hidden) return;
+  var grid = $('#start-grid');
+  grid.innerHTML = '';
+  PRESETS.slice(0, 4).forEach(function (p) {
+    var b = el('button', 'preset');
     b.type = 'button';
-    b.append(icon('bell', 14), el('b', null, label), el('span', 'n', e.name));
-    b.setAttribute('aria-label', `${label} ${e.name}${msg ? '、' + msg : ''}`);
-    b.addEventListener('click', () => sched && openEditor(sched));
-    return b;
-  };
-  if (rows.length > 4) {
-    // 細かい間隔は 1 時間ぶんをまとめる
-    const first = hmOf(new Date(rows[0].at));
-    const last = hmOf(new Date(rows[rows.length - 1].at));
-    const b = mk(`${first}〜${last}`, rows[rows.length - 1]);
-    b.querySelector('.n').textContent = `${rows[0].name} · ${rows.length}回`;
-    wrap.append(b);
-  } else {
-    for (const e of rows) wrap.append(mk(hmOf(new Date(e.at)), e));
+    b.append(el('b', null, p.title), el('span', null, p.desc));
+    b.addEventListener('click', function () { openEditor(p.make(), { asNew: true }); });
+    grid.append(b);
+  });
+}
+
+function renderToday() {
+  $('#today-wrap').hidden = state.schedules.length === 0;
+  var box = $('#today-list');
+  box.innerHTML = '';
+  var todayISO = SL.isoDate(new Date());
+  var day = weekDays.filter(function (d) { return d.date === todayISO; })[0];
+  var rows = day ? day.events.filter(function (e) { return !e.past && e.enabled; }) : [];
+  $('#today-head').textContent = day ? '今日これから鳴るもの' : '今週の表示';
+  if (!day) { box.append(el('p', 'today-none', '今日は別の週を見ています')); return; }
+  if (!rows.length) { box.append(el('p', 'today-none', '今日はもう鳴りません')); return; }
+  rows.slice(0, 8).forEach(function (ev, i) {
+    var row = el('div', 'today-row' + (ev.tag === 'lead' ? ' is-lead' : '')
+      + (i === 0 && !ev.quiet ? ' is-next' : '') + (ev.quiet ? ' is-quiet' : ''));
+    row.append(el('div', 'today-time', ev.time));
+    row.append(el('div', 'today-name',
+      ev.name + (ev.tag === 'lead' ? '（' + ev.lead + '分前の予告）' : '')));
+    row.append(el('div', 'today-rel', ev.quiet ? '禁止時間' : SL.fmtCountdown(ev.at)));
+    row.addEventListener('click', function () { openEditorById(ev.schedule_id); });
+    box.append(row);
+  });
+}
+
+function shiftWeek(n) {
+  weekStartISO = SL.isoDate(SL.addDays(SL.parseLocal(weekStartISO), n * 7));
+  loadWeek();
+}
+
+function renderHero() {
+  var next = state.next_events[0];
+  var hero = $('#hero');
+  var note = $('#hero-note');
+  var off = state.settings.master_enabled === false;
+  note.hidden = true;
+  if (off) {
+    note.hidden = false;
+    note.textContent = '全体がオフです。右上のスイッチを入れるまで何も鳴りません。';
   }
-  return wrap;
-}
-
-function shiftWeek(delta) {
-  tlWeekStart = new Date(tlWeekStart.getFullYear(), tlWeekStart.getMonth(), tlWeekStart.getDate() + delta * 7);
-  const d = parseDate(tlDay);
-  d.setDate(d.getDate() + delta * 7);
-  tlDay = isoDate(d);
-  tlEvents = {};
-  renderTimeline(false);
-  loadTimeline(true);
-}
-
-function goToday() {
-  tlWeekStart = mondayOf(new Date());
-  tlDay = isoDate(new Date());
-  loadTimeline(true);
-}
-
-// ---------------------------------------------------------------- 全体の描画・通信
-
-function renderAll() {
-  renderBanner();
-  renderSchedules();
-  renderSounds();
-  renderSettings();
-  renderLog();
-  renderAbout();
-}
-
-function applyNow(data) {
-  state.next_events = data.next_events;
-  const was = state.playing;
-  state.playing = !!data.playing;
-  if (was !== state.playing) renderBanner();
-}
-
-async function refresh() {
-  try {
-    const data = await api('GET', '/api/state');
-    state = Object.assign(state, data);
-    renderAll();
-    if (currentTab === 'timeline') loadTimeline(false);
-  } catch (e) {
-    toast(e.message, true);
+  if (!next) {
+    $('#hero-when').hidden = true;
+    $('#hero-name').textContent = state.schedules.length
+      ? '予定はありません（すべてオフかもしれません）' : 'まだ予定がありません';
+    $('#hero-count').textContent = '';
+    $('#hero-test').hidden = true;
+    hero.classList.remove('is-quiet');
+    return;
+  }
+  $('#hero-when').hidden = false;
+  $('#hero-when').textContent = SL.fmtWhen(next.at);
+  $('#hero-name').textContent = next.name
+    + (next.tag === 'lead' ? '（' + next.lead + '分前の予告）' : '');
+  $('#hero-count').textContent = SL.fmtCountdown(next.at);
+  var test = $('#hero-test');
+  test.hidden = false;
+  test.onclick = function () { testSchedule(next.schedule_id, next.tag); };
+  hero.classList.toggle('is-quiet', !!next.quiet);
+  if (next.quiet && !off) {
+    note.hidden = false;
+    note.textContent = '禁止時間に入るので、この予定は鳴りません。';
   }
 }
 
-async function poll() {
-  try {
-    const data = await api('GET', '/api/now');
-    state.next_events = data.next_events;
-    state.playing = !!data.playing;
-    if ($('#push-log').hidden) state.log = data.log;
-    renderBanner();
-    if (!$('#push-log').hidden) renderLog();
-    if (currentTab === 'timeline') {
-      if (Date.now() - tlFetchedAt > 55000) loadTimeline(false);
-      else tickTimeline();
+// ------------------------------------------------------------------ その日の一覧
+
+function openDay(d) {
+  daySheetDate = d.date;
+  var date = SL.parseLocal(d.date);
+  $('#day-title').textContent = (date.getMonth() + 1) + '月' + date.getDate() + '日（'
+    + SL.DAYS[d.weekday] + '）';
+  var body = $('#day-body');
+  body.innerHTML = '';
+  if (!d.events.length) {
+    body.append(el('p', 'day-empty', 'この日は何も鳴りません'));
+  }
+  d.events.forEach(function (ev) {
+    var row = el('div', 'day-row');
+    if (ev.tag === 'lead') row.classList.add('is-lead');
+    if (!ev.enabled) row.classList.add('is-off');
+    row.append(el('div', 'day-time', ev.time));
+    var mid = el('div', 'day-body');
+    mid.append(el('div', 'day-name', ev.name));
+    var sub = [];
+    if (ev.tag === 'lead') sub.push(ev.lead + '分前の予告');
+    if (!ev.enabled) sub.push('オフ');
+    if (ev.quiet) sub.push('禁止時間なので鳴りません');
+    sub.push(soundLabel(ev.sound) || ({ speak: '読み上げ', both: '読み上げ' })[ev.action_type] || '');
+    mid.append(el('div', 'day-sub', sub.filter(Boolean).join(' · ')));
+    row.append(mid);
+    var play = el('button', 'btn btn-ghost btn-sm', '▶');
+    play.type = 'button';
+    play.title = '試聴';
+    play.addEventListener('click', function () { testSchedule(ev.schedule_id, ev.tag); });
+    row.append(play);
+    var edit = el('button', 'btn btn-sm', '編集');
+    edit.type = 'button';
+    edit.addEventListener('click', function () {
+      $('#day-sheet').close();
+      openEditorById(ev.schedule_id);
+    });
+    row.append(edit);
+    body.append(row);
+  });
+  $('#day-sheet').showModal();
+}
+
+// ------------------------------------------------------------------ 予定の一覧
+
+function soundLabel(ref) {
+  if (!ref) return '';
+  var groups = ['builtin', 'user', 'system'];
+  for (var i = 0; i < groups.length; i++) {
+    var hit = (state.sounds[groups[i]] || []).filter(function (s) { return s.ref === ref; })[0];
+    if (hit) return hit.label;
+  }
+  return ref.replace(/^[a-z]+:/, '');
+}
+
+function renderList() {
+  var box = $('#sched-list');
+  box.innerHTML = '';
+  var items = state.schedules.filter(function (s) {
+    return filter === 'all' || (filter === 'on' ? s.enabled : !s.enabled);
+  }).sort(function (a, b) {
+    // 次に鳴る順。オフのものは後ろにまとめる
+    if (!!a.enabled !== !!b.enabled) return a.enabled ? -1 : 1;
+    if (!a.next_at || !b.next_at) return a.next_at ? -1 : (b.next_at ? 1 : 0);
+    return a.next_at < b.next_at ? -1 : (a.next_at > b.next_at ? 1 : 0);
+  });
+  $('#sched-count').textContent = state.schedules.length ? '(' + state.schedules.length + ')' : '';
+  $('#sched-empty').hidden = state.schedules.length > 0;
+
+  items.forEach(function (s) {
+    var card = el('div', 'card' + (s.enabled ? '' : ' is-off'));
+
+    var main = el('div', 'card-main');
+    var name = el('div', 'card-name', s.name);
+    main.append(name);
+    var sw = el('label', 'switch');
+    sw.title = '有効／無効';
+    var cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = !!s.enabled;
+    cb.addEventListener('click', function (e) { e.stopPropagation(); });
+    cb.addEventListener('change', function () { toggleSchedule(s, cb); });
+    sw.append(cb, el('span', 'track'));
+    main.append(sw);
+    main.append(el('div', 'card-when', s.summary));
+    main.addEventListener('click', function () { openEditor(s); });
+    card.append(main);
+
+    var tags = el('div', 'card-tags');
+    var a = s.action;
+    if (a.type === 'sound' || a.type === 'both') {
+      tags.append(el('span', 'tag tag-sound', '🔊 ' + soundLabel(a.sound)));
     }
-  } catch { /* 一時的な失敗は黙って見送る */ }
+    if (a.type === 'speak' || a.type === 'both') {
+      tags.append(el('span', 'tag tag-sound', '💬 ' + a.text));
+    }
+    if ((s.lead_times || []).length) {
+      tags.append(el('span', 'tag tag-lead',
+        s.lead_times.map(function (m) { return m + '分前'; }).join('・')));
+    }
+    tags.append(el('span', 'tag', SL.volumePct(a.volume)));
+    if (a.repeat > 1) tags.append(el('span', 'tag', '×' + a.repeat));
+    if (s.note) tags.append(el('span', 'tag', s.note));
+    card.append(tags);
+
+    var next = el('div', 'card-next');
+    if (!s.enabled) next.append(el('span', null, 'オフ'));
+    else if (s.next_at) {
+      next.append(el('span', null, '次回 ' + SL.fmtWhen(s.next_at) + '・' + SL.fmtCountdown(s.next_at)));
+    } else next.append(el('span', null, '次の予定なし'));
+    var test = el('button', 'btn btn-ghost btn-sm', '▶ 試聴');
+    test.type = 'button';
+    test.addEventListener('click', function () { testSchedule(s.id, 'main'); });
+    next.append(test);
+    card.append(next);
+
+    box.append(card);
+  });
 }
 
-let pollTimer = null;
-function startPolling() {
-  clearInterval(pollTimer);
-  pollTimer = setInterval(poll, 10000);
-}
-
-async function stopSound() {
+async function toggleSchedule(s, cb) {
   try {
-    await api('POST', '/api/stop');
-    state.playing = false;
-    playingRef = null;
-    renderBanner();
-    renderSounds();
-    toast('止めました');
-  } catch (e) { toast(e.message, true); }
-}
-
-async function toggleSchedule(s, on, sw) {
-  try {
-    const data = await api('PATCH', `/api/schedules/${s.id}`, { enabled: on });
+    var data = await api('PATCH', '/api/schedules/' + s.id, { enabled: cb.checked });
     Object.assign(s, data.schedule);
-    renderSchedules();
-    poll();
-    if (currentTab === 'timeline') loadTimeline(false);
+    renderList();
+    refreshLive();
   } catch (e) {
-    setSwitch(sw, !on);
-    toast(e.message, true);
+    cb.checked = !cb.checked;
+    fail(e);
   }
 }
 
-async function removeSchedule(s) {
-  if (!(await confirmSheet(`「${s.name}」を削除しますか？`, '予定を削除'))) return false;
+async function testSchedule(id, which) {
   try {
-    await api('DELETE', `/api/schedules/${s.id}`);
-    toast('削除しました');
-    await refresh();
-    poll();
-    return true;
-  } catch (e) { toast(e.message, true); return false; }
+    await api('POST', '/api/schedules/' + id + '/test', { which: which === 'lead' ? 'lead' : 'main' });
+    toast(which === 'lead' ? '予告を鳴らしました' : '鳴らしました');
+  } catch (e) { fail(e); }
 }
 
-function duplicate(s) {
-  const copy = JSON.parse(JSON.stringify(s));
-  copy.id = null;
-  copy.name = s.name + ' のコピー';
-  copy.last_fired = null;
-  openEditor(copy, { asNew: true });
+// ------------------------------------------------------------------ サウンド
+
+function renderSounds() {
+  function fill(sel, items, deletable) {
+    var box = $(sel);
+    box.innerHTML = '';
+    if (!items.length) {
+      box.append(el('p', 'hint', 'ありません'));
+      return;
+    }
+    items.forEach(function (s) {
+      var b = el('button', 'sound');
+      b.type = 'button';
+      b.append(el('span', null, '▶'));
+      b.append(el('span', 'sound-label', s.label));
+      b.addEventListener('click', function () { preview(s.ref, b); });
+      if (deletable) {
+        var del = el('button', 'sound-del', '✕');
+        del.type = 'button';
+        del.title = '削除';
+        del.addEventListener('click', function (e) {
+          e.stopPropagation();
+          deleteSound(s);
+        });
+        b.append(del);
+      }
+      box.append(b);
+    });
+  }
+  fill('#lib-builtin', state.sounds.builtin, false);
+  fill('#lib-user', state.sounds.user, true);
+  fill('#lib-system', state.sounds.system, false);
 }
 
-async function preview(ref) {
-  if (!ref) { toast('サウンドを選んでください', true); return; }
+async function preview(ref, node) {
   try {
     await api('POST', '/api/preview', { type: 'sound', sound: ref });
-    markPlaying(ref);
-  } catch (e) { toast(e.message, true); }
+    if (node) {
+      $$('.sound.is-playing').forEach(function (n) { n.classList.remove('is-playing'); });
+      node.classList.add('is-playing');
+      setTimeout(function () { node.classList.remove('is-playing'); }, 2500);
+    }
+  } catch (e) { fail(e); }
 }
 
 async function deleteSound(s) {
-  const name = s.ref.slice('user:'.length);
-  if (!(await confirmSheet(`「${s.label}」を削除しますか？`, 'サウンドを削除'))) return;
+  if (!confirm('「' + s.label + '」を削除しますか？')) return;
   try {
-    const data = await api('DELETE', `/api/sounds/${encodeURIComponent(name)}`);
+    var data = await api('DELETE', '/api/sounds/' + encodeURIComponent(s.ref.slice(5)));
     state.sounds = data.sounds;
     renderSounds();
     toast('削除しました');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { fail(e); }
 }
 
 async function uploadFiles(files) {
-  for (const file of files) {
-    uploadStatus = `${file.name} を追加中…`;
-    renderSounds();
+  var status = $('#upload-status');
+  for (var i = 0; i < files.length; i++) {
+    var file = files[i];
+    status.textContent = file.name + ' を追加中…';
     try {
-      const buf = await file.arrayBuffer();
-      let bin = '';
-      const bytes = new Uint8Array(buf);
-      for (let i = 0; i < bytes.length; i += 0x8000) {
-        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      var buf = await file.arrayBuffer();
+      var bytes = new Uint8Array(buf);
+      var bin = '';
+      for (var j = 0; j < bytes.length; j += 0x8000) {
+        bin += String.fromCharCode.apply(null, bytes.subarray(j, j + 0x8000));
       }
-      const data = await api('POST', '/api/sounds', { filename: file.name, data: btoa(bin) });
+      var data = await api('POST', '/api/sounds', { filename: file.name, data: btoa(bin) });
       state.sounds = data.sounds;
-      uploadStatus = `${data.sound.label} を追加しました`;
       renderSounds();
+      status.textContent = data.sound.label + ' を追加しました';
     } catch (e) {
-      uploadStatus = '';
-      renderSounds();
-      toast(`${file.name}: ${e.message}`, true);
+      status.textContent = '';
+      toast(file.name + '： ' + e.message, true);
     }
   }
   $('#upload').value = '';
-  setTimeout(() => { uploadStatus = ''; renderSounds(); }, 4000);
+  setTimeout(function () { status.textContent = ''; }, 4000);
 }
 
-// ---------------------------------------------------------------- 編集シート
+// ------------------------------------------------------------------ 設定
 
-function blank() {
-  const now = new Date();
+function renderSettings() {
+  var st = state.settings;
+  $('#set-volume').value = st.default_volume;
+  $('#vol-out').textContent = SL.volumePct(st.default_volume);
+  $('#set-rate').value = st.speak_rate;
+  $('#rate-out').textContent = st.speak_rate;
+  $('#quiet-enabled').checked = !!(st.quiet_hours || {}).enabled;
+  $('#quiet-start').value = (st.quiet_hours || {}).start;
+  $('#quiet-end').value = (st.quiet_hours || {}).end;
+  $('#quiet-desc').textContent = SL.describeQuiet(st.quiet_hours);
+  $('#master').checked = st.master_enabled !== false;
+  fillVoices($('#set-voice'), st.default_voice);
+}
+
+function fillVoices(sel, chosen) {
+  sel.innerHTML = '';
+  var none = el('option', null, '（システム既定）');
+  none.value = '';
+  sel.append(none);
+  var groups = {};
+  state.voices.forEach(function (v) {
+    var key = v.locale.indexOf('ja') === 0 ? '日本語' : 'その他の言語';
+    if (!groups[key]) {
+      groups[key] = document.createElement('optgroup');
+      groups[key].label = key;
+      sel.append(groups[key]);
+    }
+    var o = el('option', null, v.name + '（' + v.locale + '）');
+    o.value = v.name;
+    groups[key].append(o);
+  });
+  if (chosen && !Array.prototype.some.call(sel.options, function (o) { return o.value === chosen; })) {
+    var lost = el('option', null, chosen + '（この Mac にありません）');
+    lost.value = chosen;
+    sel.append(lost);
+  }
+  sel.value = chosen || '';
+}
+
+function renderLog() {
+  var ul = $('#log');
+  ul.innerHTML = '';
+  var names = {
+    fired: '再生', error: 'エラー', missed: '取りこぼし',
+    skipped: 'スキップ', test: '試聴', info: '情報',
+  };
+  if (!state.log.length) {
+    var li = el('li');
+    li.append(el('span', 'ts', '—'), el('span', 'msg', 'まだ記録がありません'));
+    ul.append(li);
+    return;
+  }
+  state.log.forEach(function (e) {
+    var li = el('li');
+    li.append(el('span', 'ts', e.ts.replace('T', ' ').slice(5)));
+    li.append(el('span', 'lv lv-' + e.level, names[e.level] || e.level));
+    li.append(el('span', 'msg', e.message));
+    ul.append(li);
+  });
+}
+
+function renderAbout() {
+  var dl = $('#about');
+  dl.innerHTML = '';
+  [['接続先', location.origin],
+   ['サーバ起動', state.started_at ? state.started_at.replace('T', ' ') : '—'],
+   ['内蔵サウンド', state.sounds.builtin.length + ' 種類'],
+   ['読み上げの声', state.voices.length + ' 種類'],
+   ['通信', 'この Mac の中だけ（外部送信なし）']].forEach(function (row) {
+    dl.append(el('dt', null, row[0]), el('dd', null, row[1]));
+  });
+}
+
+// ------------------------------------------------------------------ 編集画面
+
+function blankDraft(dateISO) {
+  var now = new Date();
   return {
-    id: null, name: '', enabled: true, kind: 'daily', time: `${pad(now.getHours())}:00`,
-    date: isoDate(now),
-    days: [0, 1, 2, 3, 4], every_minutes: 60,
-    window: { start: '09:00', end: '21:00' }, lead_times: [], note: '',
+    id: null, name: '', enabled: true, kind: 'weekly',
+    time: '08:00',
+    days: [0, 1, 2, 3, 4],
+    day_of_month: String(now.getDate()),
+    month: String(now.getMonth() + 1),
+    date: dateISO || SL.isoDate(now),
+    every_minutes: '60',
+    window: { start: '09:00', end: '21:00' },
+    lead_times: [],
+    note: '',
     action: {
-      type: 'sound', sound: 'builtin:doorbell',
-      volume: state.settings.default_volume ?? 0.6, repeat: 1,
-      text: '', voice: state.settings.default_voice || '', rate: state.settings.speak_rate ?? 180,
+      type: 'sound', sound: 'builtin:doorbell', text: '', voice: state.settings.default_voice || '',
+      rate: state.settings.speak_rate || 180, volume: state.settings.default_volume, repeat: 1,
     },
     lead_action: { sound: 'builtin:melody_notice', speak_remaining: false },
   };
 }
 
-/** sched を下書きにしてシートを開く。opts.asNew: 新規として保存、opts.presets: よく使う型を出す */
-function openEditor(sched, opts = {}) {
-  const b = blank();
-  draft = sched ? JSON.parse(JSON.stringify(sched)) : b;
-  draft.action = Object.assign({}, b.action, draft.action || {});
-  draft.lead_action = Object.assign({}, b.lead_action, draft.lead_action || {});
-  if (!draft.window) draft.window = b.window;
-  if (!draft.date) draft.date = b.date;
-  if (!draft.time) draft.time = b.time;
-  if (!draft.every_minutes) draft.every_minutes = 60;
-  if (!draft.days || !draft.days.length) draft.days = draft.kind === 'interval' ? [0, 1, 2, 3, 4, 5, 6] : b.days;
-  draft.lead_times = draft.lead_times || [];
-  if (!draft.action.sound) draft.action.sound = b.action.sound;
-  draft._sound = draft.action.type !== 'speak';
-  draft._speak = draft.action.type !== 'sound';
-  editing = opts.asNew ? null : (sched ? sched.id : null);
-
-  $('#editor-title').textContent = editing ? '予定を編集' : '予定を追加';
-  $('#editor-error').hidden = true;
-  $('#preset-strip').hidden = !(opts.presets || !sched);
-  $('#editor-danger').hidden = !editing;
-
-  const hist = [];
-  if (editing && sched.enabled && sched.next_at) hist.push(`次回 ${fmtWhen(sched.next_at)}`);
-  if (editing && sched.last_fired) hist.push(`前回 ${fmtWhen(sched.last_fired)}`);
-  $('#f-history').hidden = !hist.length;
-  $('#f-history').textContent = hist.join('　·　');
-
-  $$('.sheet-page').forEach((p) => p.classList.remove('is-current', 'is-behind'));
-  $('#pg-main').classList.add('is-current');
-  $('#pg-main .sheet-scroll').scrollTop = 0;
-  fillEditor();
-
-  const d = $('#editor');
-  d.classList.remove('is-closing');
-  if (!d.open) d.showModal();
-  document.documentElement.classList.add('is-locked', 'sheet-open');
-  $('#editor-cancel').focus({ preventScroll: true });
+function openEditorById(id) {
+  var s = state.schedules.filter(function (x) { return x.id === id; })[0];
+  if (s) openEditor(s);
 }
 
-function fillEditor() {
+function openEditor(sched, opts) {
+  opts = opts || {};
+  var base = blankDraft(opts.dateISO);
+  if (sched) {
+    draft = Object.assign(base, JSON.parse(JSON.stringify(sched)));
+    draft.day_of_month = String(sched.day_of_month != null ? sched.day_of_month : base.day_of_month);
+    draft.month = String(sched.month != null ? sched.month : base.month);
+    draft.every_minutes = String(sched.every_minutes || base.every_minutes);
+    draft.window = sched.window || base.window;
+    draft.lead_action = sched.lead_action || base.lead_action;
+    draft.days = sched.days || base.days;
+    draft.time = sched.time || base.time;
+    draft.date = opts.dateISO || sched.date || base.date;
+  } else {
+    draft = base;
+    if (opts.kind) draft.kind = opts.kind;
+    if (opts.dateISO) {
+      draft.date = opts.dateISO;
+      draft.days = [(SL.parseLocal(opts.dateISO).getDay() + 6) % 7];
+    }
+  }
+  editingId = opts.asNew || !sched ? null : sched.id;
+  $('#editor-title').textContent = editingId ? '予定を編集' : '新しい予定';
+  $('#editor-extra').hidden = !editingId;
+  $('#editor-error').hidden = true;
+
   $('#f-name').value = draft.name;
   $('#f-time').value = draft.time;
   $('#f-date').value = draft.date;
-  $('#f-date2').value = draft.date;
   $('#f-win-start').value = draft.window.start;
   $('#f-win-end').value = draft.window.end;
-  $('#f-win-start2').value = draft.window.start;
-  $('#f-win-end2').value = draft.window.end;
-  $('#f-every').value = draft.every_minutes;
   $('#f-note').value = draft.note || '';
-  $('#f-volume').value = draft.action.volume ?? 0.6;
   $('#f-text').value = draft.action.text || '';
-  $('#f-rate').value = draft.action.rate || 180;
-  setSwitch($('#f-lead-speak'), !!draft.lead_action.speak_remaining);
-  renderEditorValues();
+  $('#f-volume').value = draft.action.volume;
+  $('#f-lead-speak').checked = !!draft.lead_action.speak_remaining;
+
+  fillSelect($('#f-dom'), SL.domOptions(), draft.day_of_month);
+  fillSelect($('#f-month'), SL.monthOptions(), draft.month);
+  fillSelect($('#f-every'), SL.intervalOptions(), draft.every_minutes);
+  fillSelect($('#f-repeat'), repeatOptions(), String(draft.action.repeat || 1));
+  fillVoices($('#f-voice'), draft.action.voice);
+
+  setSeg('#f-kind', 'kind', draft.kind);
+  setSeg('#f-atype', 'atype', draft.action.type);
+  renderDayButtons();
+  renderLeadButtons();
+  renderPickers();
+  syncEditor();
+  $('#editor').showModal();
+  if (!editingId) setTimeout(function () { $('#f-name').focus(); }, 40);
 }
 
-function repeatSummary() {
-  if (draft.kind === 'once') return `1回だけ ${onceLabel(draft.date)}`;
-  if (draft.kind === 'interval') {
-    const d = daysLabel(draft.days);
-    return `${draft.every_minutes}分ごと${d === '毎日' ? '' : ' · ' + d}`;
-  }
-  return daysLabel(draft.days);
+function repeatOptions() {
+  var out = [];
+  for (var i = 1; i <= 10; i++) out.push({ value: String(i), label: i + '回' });
+  return out;
 }
 
-function renderEditorValues() {
-  $$('#editor [data-kind-for]').forEach((e) => {
-    e.hidden = !e.dataset.kindFor.split(' ').includes(draft.kind);
+function fillSelect(sel, options, value) {
+  sel.innerHTML = '';
+  options.forEach(function (o) {
+    var opt = el('option', null, o.label);
+    opt.value = o.value;
+    sel.append(opt);
   });
-  $('#v-repeat').textContent = repeatSummary();
-  $('#f-every-caption').textContent = `${draft.every_minutes}分ごと · ${daysLabel(draft.days)}`;
-  $('#v-sound').textContent = draft._sound ? soundLabel(draft.action.sound) : 'なし';
-  $('#v-speak').textContent = draft._speak ? (draft.action.text || '（文章を入力）') : 'オフ';
-  $('#f-vol-out').textContent = Math.round(Number(draft.action.volume ?? 0.6) * 100) + '%';
-  setRangeFill($('#f-volume'));
-  $('#f-repeat-out').textContent = `×${draft.action.repeat || 1}`;
-  $('#f-repeat-dec').disabled = (draft.action.repeat || 1) <= 1;
-  $('#f-repeat-inc').disabled = (draft.action.repeat || 1) >= 10;
-  const hasLeads = draft.lead_times.length > 0;
-  $('#v-lead').textContent = hasLeads ? leadLabel(draft.lead_times) : 'なし';
-  $$('#editor [data-leads-only]').forEach((e) => { e.hidden = !hasLeads; });
-  $('#v-lead-sound').textContent = soundLabel(draft.lead_action.sound);
+  sel.value = value;
 }
 
-function pushPage(id) {
-  const cur = $('.sheet-page.is-current');
-  const next = $(id);
-  if (id === '#pg-repeat') renderRepeatPage();
-  if (id === '#pg-speak') renderSpeakPage();
-  if (id === '#pg-lead') renderLeadPage();
-  next.querySelector('.sheet-scroll').scrollTop = 0;
-  cur.classList.remove('is-current');
-  cur.classList.add('is-behind');
-  next.classList.add('is-current');
-  setTimeout(() => next.querySelector('[data-pop]').focus({ preventScroll: true }), 320);
-}
-
-function popPage() {
-  const cur = $('.sheet-page.is-current');
-  if (!cur || cur.id === 'pg-main') return false;
-  cur.classList.remove('is-current');
-  const main = $('#pg-main');
-  main.classList.remove('is-behind');
-  main.classList.add('is-current');
-  renderEditorValues();
-  return true;
-}
-
-function closeEditor() {
-  const d = $('#editor');
-  if (!d.open) return;
-  d.classList.add('is-closing');
-  setTimeout(() => {
-    d.classList.remove('is-closing');
-    if (d.open) d.close();
-  }, 200);
-}
-
-// --- 子画面: 繰り返し
-function renderRepeatPage() {
-  $$('#f-kind button').forEach((b) => b.setAttribute('aria-checked', b.dataset.kind === draft.kind ? 'true' : 'false'));
-  $$('#pg-repeat [data-kind-for]').forEach((e) => {
-    e.hidden = !e.dataset.kindFor.split(' ').includes(draft.kind);
+function setSeg(sel, attr, value) {
+  $$(sel + ' button').forEach(function (b) {
+    b.classList.toggle('is-active', b.dataset[attr] === value);
   });
-  const box = $('#f-days');
-  box.textContent = '';
-  DAY_NAMES.forEach((label, i) => {
-    box.append(checkCell(label, draft.days.includes(i), () => {
-      const set = new Set(draft.days);
-      set.has(i) ? set.delete(i) : set.add(i);
-      draft.days = Array.from(set).sort((x, y) => x - y);
-      renderRepeatPage();
-    }));
+  var key = attr + 'For';
+  $$('[data-' + attr + '-for]').forEach(function (e) {
+    e.hidden = e.dataset[key].split(' ').indexOf(value) < 0;
   });
-  box.querySelectorAll('.check-cell').forEach((c) => c.setAttribute('role', 'menuitemcheckbox'));
-  const cur = draft.days.join(',');
-  $$('#f-quick button').forEach((b) => b.classList.toggle('is-on', b.dataset.days === cur));
 }
 
-// --- 子画面: サウンド（本番 / 予告）
-let soundTarget = 'main';
-function renderSoundPage() {
-  const box = $('#pg-sound-list');
-  box.textContent = '';
-  const isMain = soundTarget === 'main';
-  $('#pg-sound-title').textContent = isMain ? 'サウンド' : '予告のサウンド';
-  const chosen = isMain ? (draft._sound ? draft.action.sound : '') : draft.lead_action.sound;
-  const pick = (ref) => {
-    if (isMain) {
-      if (!ref) draft._sound = false;
-      else { draft._sound = true; draft.action.sound = ref; }
-    } else {
-      draft.lead_action.sound = ref;
-    }
-    renderSoundPage();
-    renderEditorValues();
-    if (ref) preview(ref);
-  };
-  const mkRow = (ref, label) => {
-    const row = el('button', 'cell check-cell');
-    row.type = 'button';
-    row.setAttribute('role', 'menuitemradio');
-    row.setAttribute('aria-checked', ref === chosen ? 'true' : 'false');
-    if (ref) {
-      const dot = el('span', 'play-dot');
-      dot.append(icon('play', 12));
-      row.append(dot);
-    }
-    row.append(el('span', 'cell-label', label), icon('check', 20, 'check'));
-    row.addEventListener('click', () => pick(ref));
-    return row;
-  };
-  if (isMain) {
-    const block = el('div', 'group-block');
-    const g = el('div', 'group');
-    g.append(mkRow('', 'なし（読み上げだけ）'));
-    block.append(g);
-    box.append(block);
-  }
-  let known = !chosen;
-  for (const [title, key] of SOUND_GROUPS) {
-    const items = state.sounds[key] || [];
-    if (!items.length) continue;
-    const block = el('div', 'group-block');
-    block.append(el('h3', 'group-head', title));
-    const g = el('div', 'group');
-    for (const s of items) {
-      if (s.ref === chosen) known = true;
-      g.append(mkRow(s.ref, s.label));
-    }
-    block.append(g);
-    box.append(block);
-  }
-  if (!known) {
-    const block = el('div', 'group-block');
-    block.append(el('h3', 'group-head', '見つからないサウンド'));
-    const g = el('div', 'group');
-    g.append(mkRow(chosen, `${chosen}（見つかりません）`));
-    block.append(g);
-    box.append(block);
-  }
-  box.append(el('p', 'footnote', 'タップすると選んで試聴します。'));
+function renderDayButtons() {
+  var box = $('#f-days');
+  box.innerHTML = '';
+  SL.DAYS.forEach(function (label, i) {
+    var b = el('button', draft.days.indexOf(i) >= 0 ? 'is-on' : '', label);
+    b.type = 'button';
+    b.addEventListener('click', function () {
+      var at = draft.days.indexOf(i);
+      if (at >= 0) draft.days.splice(at, 1); else draft.days.push(i);
+      draft.days.sort(function (x, y) { return x - y; });
+      renderDayButtons();
+      syncEditor();
+    });
+    box.append(b);
+  });
+  $$('[data-days]').forEach(function (b) {
+    b.classList.toggle('is-on', b.dataset.days === draft.days.join(','));
+  });
 }
 
-// --- 子画面: 読み上げ
-function renderSpeakPage() {
-  setSwitch($('#f-speak'), draft._speak);
-  $('[data-speak-only]').hidden = !draft._speak;
-  $('#f-rate-out').textContent = $('#f-rate').value;
-  setRangeFill($('#f-rate'));
-  renderVoiceList($('#f-voice-list'), draft.action.voice, (v) => { draft.action.voice = v; }, '声');
+var LEAD_CHOICES = [1, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120];
+
+function renderLeadButtons() {
+  var box = $('#lead-quick');
+  box.innerHTML = '';
+  LEAD_CHOICES.forEach(function (m) {
+    var on = draft.lead_times.indexOf(m) >= 0;
+    var b = el('button', 'pill' + (on ? ' is-on' : ''), m + '分前');
+    b.type = 'button';
+    b.addEventListener('click', function () {
+      var at = draft.lead_times.indexOf(m);
+      if (at >= 0) draft.lead_times.splice(at, 1); else draft.lead_times.push(m);
+      draft.lead_times.sort(function (x, y) { return y - x; });
+      renderLeadButtons();
+      syncEditor();
+    });
+    box.append(b);
+  });
+  $$('[data-leads-only]').forEach(function (e) { e.hidden = !draft.lead_times.length; });
 }
 
-// --- 子画面: 予告
-function renderLeadPage() {
-  const box = $('#f-leads');
-  box.textContent = '';
-  box.append(checkCell('なし', !draft.lead_times.length, () => { draft.lead_times = []; renderLeadPage(); }));
-  for (const m of LEAD_CHOICES) {
-    box.append(checkCell(`${m}分前`, draft.lead_times.includes(m), () => {
-      const set = new Set(draft.lead_times);
-      if (set.has(m)) set.delete(m);
-      else if (set.size >= 8) { toast('予告は 8 つまでです', true); return; }
-      else set.add(m);
-      draft.lead_times = Array.from(set).sort((x, y) => y - x);
-      renderLeadPage();
-    }));
-  }
-  box.querySelectorAll('.check-cell').forEach((c, i) => { if (i) c.setAttribute('role', 'menuitemcheckbox'); });
+function renderPickers() {
+  renderPicker('#f-sound-picker', draft.action.sound, function (ref) {
+    draft.action.sound = ref;
+    renderPickers();
+    syncEditor();
+    preview(ref);
+  });
+  renderPicker('#f-lead-picker', draft.lead_action.sound, function (ref) {
+    draft.lead_action.sound = ref;
+    renderPickers();
+    syncEditor();
+    preview(ref);
+  });
 }
 
-function actionType() {
-  if (draft._sound && draft._speak) return 'both';
-  if (draft._speak) return 'speak';
-  if (draft._sound) return 'sound';
-  return null;
+function renderPicker(sel, chosen, onPick) {
+  var box = $(sel);
+  box.innerHTML = '';
+  [['内蔵', 'builtin'], ['自分のファイル', 'user'], ['システム', 'system']].forEach(function (g) {
+    var items = state.sounds[g[1]] || [];
+    if (!items.length) return;
+    box.append(el('div', 'sound-picker-group', g[0]));
+    items.forEach(function (s) {
+      var b = el('button', 'pick' + (s.ref === chosen ? ' is-on' : ''), s.label);
+      b.type = 'button';
+      b.addEventListener('click', function () { onPick(s.ref); });
+      box.append(b);
+    });
+  });
 }
 
-function collect() {
-  const type = actionType();
-  if (!type) throw new Error('サウンドか読み上げのどちらかを選んでください');
-  const kind = draft.kind;
-  const a = draft.action;
-  const payload = {
-    name: $('#f-name').value.trim(),
-    enabled: draft.enabled !== false,
-    kind, note: $('#f-note').value.trim(),
-    lead_times: draft.lead_times,
+/** 入力を draft に取り込み、プレビュー文と各表示を更新する */
+function syncEditor() {
+  draft.name = $('#f-name').value;
+  draft.time = $('#f-time').value;
+  draft.date = $('#f-date').value;
+  draft.day_of_month = $('#f-dom').value;
+  draft.month = $('#f-month').value;
+  draft.every_minutes = $('#f-every').value;
+  draft.window = { start: $('#f-win-start').value, end: $('#f-win-end').value };
+  draft.note = $('#f-note').value;
+  draft.action.text = $('#f-text').value;
+  draft.action.voice = $('#f-voice').value;
+  draft.action.volume = Number($('#f-volume').value);
+  draft.action.repeat = Number($('#f-repeat').value);
+  draft.lead_action.speak_remaining = $('#f-lead-speak').checked;
+
+  var past = SL.isPast(draft);
+  $('#f-summary').textContent = SL.describeRecurrence(draft)
+    + (past ? '　← この日時はもう過ぎています' : '');
+  $('#f-summary').classList.toggle('is-warn', past);
+  $('#f-vol-out').textContent = SL.volumePct(draft.action.volume);
+  $('#dom-hint').textContent = SL.domHint(draft.day_of_month);
+  $('#f-sound-name').textContent = soundLabel(draft.action.sound);
+  $('#f-lead-name').textContent = soundLabel(draft.lead_action.sound);
+}
+
+function payload() {
+  var p = {
+    name: draft.name.trim(), enabled: draft.enabled !== false, kind: draft.kind,
+    note: draft.note.trim(), lead_times: draft.lead_times,
     action: {
-      type,
-      sound: a.sound,
-      text: (a.text || '').trim(),
-      voice: a.voice || '',
-      rate: Number(a.rate) || 180,
-      volume: Number(a.volume),
-      repeat: Number(a.repeat) || 1,
+      type: draft.action.type, sound: draft.action.sound, text: draft.action.text.trim(),
+      voice: draft.action.voice, rate: draft.action.rate || 180,
+      volume: draft.action.volume, repeat: draft.action.repeat,
     },
     lead_action: {
       sound: draft.lead_action.sound,
-      speak_remaining: !!draft.lead_action.speak_remaining,
-      volume: Number(a.volume),
+      speak_remaining: draft.lead_action.speak_remaining,
+      volume: draft.action.volume,
     },
   };
-  if (kind === 'daily') { payload.time = draft.time; payload.days = draft.days; }
-  if (kind === 'once') { payload.time = draft.time; payload.date = draft.date; }
-  if (kind === 'interval') {
-    payload.every_minutes = Number(draft.every_minutes);
-    payload.window = { start: draft.window.start, end: draft.window.end };
-    payload.anchor = draft.window.start;
-    payload.days = draft.days.length ? draft.days : [0, 1, 2, 3, 4, 5, 6];
+  if (draft.kind === 'weekly') { p.time = draft.time; p.days = draft.days; }
+  if (draft.kind === 'monthly') { p.time = draft.time; p.day_of_month = domValue(); }
+  if (draft.kind === 'yearly') {
+    p.time = draft.time;
+    p.day_of_month = domValue();
+    p.month = Number(draft.month);
   }
-  return payload;
+  if (draft.kind === 'once') { p.time = draft.time; p.date = draft.date; }
+  if (draft.kind === 'interval') {
+    p.every_minutes = Number(draft.every_minutes);
+    p.window = draft.window;
+    p.anchor = draft.window.start;
+    p.days = draft.days.length ? draft.days : [0, 1, 2, 3, 4, 5, 6];
+  }
+  return p;
 }
 
-function showEditorError(msg) {
-  const err = $('#editor-error');
-  err.textContent = msg;
-  err.hidden = false;
-  popPage();
-  $('#pg-main .sheet-scroll').scrollTo({ top: 0, behavior: 'smooth' });
+function domValue() {
+  return draft.day_of_month === 'last' ? 'last' : Number(draft.day_of_month);
 }
 
 async function save() {
-  let payload;
-  try { payload = collect(); } catch (e) { showEditorError(e.message); return; }
+  syncEditor();
+  var err = $('#editor-error');
   try {
-    if (editing) await api('PUT', `/api/schedules/${editing}`, payload);
-    else await api('POST', '/api/schedules', payload);
-    closeEditor();
-    toast(editing ? '更新しました' : '追加しました');
+    if (editingId) await api('PUT', '/api/schedules/' + editingId, payload());
+    else await api('POST', '/api/schedules', payload());
+    $('#editor').close();
+    toast(editingId ? '更新しました' : '追加しました');
     await refresh();
-    poll();
   } catch (e) {
-    showEditorError(e.message);
+    err.textContent = e.message;
+    err.hidden = false;
+    $('.sheet-body').scrollTop = 0;
   }
 }
 
-function previewMain() {
-  const type = actionType();
-  if (!type) { toast('サウンドか読み上げを選んでください', true); return; }
-  const a = draft.action;
-  api('POST', '/api/preview', {
-    type, sound: a.sound, text: (a.text || '').trim(), voice: a.voice, rate: Number(a.rate),
-    volume: Number(a.volume),
-  }).then(() => toast('再生しました')).catch((e) => toast(e.message, true));
+function copyCurrent() {
+  syncEditor();
+  var copy = JSON.parse(JSON.stringify(draft));
+  copy.id = null;
+  copy.last_fired = null;
+  copy.name = (draft.name || '予定') + ' のコピー';
+  $('#editor').close();
+  openEditor(copy, { asNew: true });
 }
 
-function previewLead() {
-  const a = draft.action;
-  if (draft.lead_action.speak_remaining) {
-    const m = draft.lead_times[draft.lead_times.length - 1] || 5;
-    api('POST', '/api/preview', {
-      type: 'both', sound: draft.lead_action.sound,
-      text: `${$('#f-name').value.trim() || 'その予定'}まで、あと${m}分です。`,
-      voice: a.voice, volume: Number(a.volume),
-    }).then(() => toast('予告を再生しました')).catch((e) => toast(e.message, true));
-  } else {
-    api('POST', '/api/preview', { type: 'sound', sound: draft.lead_action.sound, volume: Number(a.volume) })
-      .then(() => toast('予告を再生しました')).catch((e) => toast(e.message, true));
-  }
+async function removeCurrent() {
+  if (!editingId) return;
+  if (!confirm('「' + draft.name + '」を削除しますか？')) return;
+  try {
+    await api('DELETE', '/api/schedules/' + editingId);
+    $('#editor').close();
+    toast('削除しました');
+    await refresh();
+  } catch (e) { fail(e); }
 }
 
-// ---------------------------------------------------------------- プリセット
+// ------------------------------------------------------------------ よく使う型
 
-const PRESETS = [
-  {
-    title: 'お出かけの合図', desc: '平日 8:15 にピンポーン、10分前と5分前に予告',
-    make: () => Object.assign(blank(), {
-      name: 'お出かけの時間', kind: 'daily', time: '08:15', days: [0, 1, 2, 3, 4],
-      lead_times: [10, 5],
-      action: { type: 'both', sound: 'builtin:doorbell', text: 'お出かけの時間です。',
-        volume: 0.7, repeat: 1, voice: state.settings.default_voice || '', rate: 180 },
-      lead_action: { sound: 'builtin:melody_notice', speak_remaining: true },
-    }),
-  },
-  {
-    title: '朝のメロディー', desc: '毎日 7:00 にやさしいメロディー',
-    make: () => Object.assign(blank(), {
-      name: '朝のメロディー', kind: 'daily', time: '07:00', days: [0, 1, 2, 3, 4, 5, 6],
-      action: { type: 'sound', sound: 'builtin:melody_morning', volume: 0.55, repeat: 1 },
-    }),
-  },
-  {
-    title: '時報', desc: '9:00〜21:00 の毎正時にウェストミンスター',
-    make: () => Object.assign(blank(), {
-      name: '時報', kind: 'interval', every_minutes: 60,
-      window: { start: '09:00', end: '21:00' }, days: [0, 1, 2, 3, 4, 5, 6],
-      action: { type: 'sound', sound: 'builtin:westminster', volume: 0.45, repeat: 1 },
-    }),
-  },
-  {
-    title: '休憩のうながし', desc: '10:00〜18:00 の 90分ごとに通知音',
-    make: () => Object.assign(blank(), {
-      name: '休憩しよう', kind: 'interval', every_minutes: 90,
-      window: { start: '10:00', end: '18:00' }, days: [0, 1, 2, 3, 4],
-      action: { type: 'sound', sound: 'builtin:melody_notice', volume: 0.5, repeat: 1 },
-    }),
-  },
-  {
-    title: 'ゴミ出し', desc: '火・金 7:30 に読み上げ付きで知らせる',
-    make: () => Object.assign(blank(), {
-      name: 'ゴミ出し', kind: 'daily', time: '07:30', days: [1, 4], lead_times: [15],
-      action: { type: 'both', sound: 'builtin:chime_up', text: 'ゴミ出しの日です。',
-        volume: 0.6, repeat: 1, voice: state.settings.default_voice || '', rate: 180 },
-      lead_action: { sound: 'builtin:ding', speak_remaining: false },
-    }),
-  },
-  {
-    title: 'おやすみの合図', desc: '毎日 22:30 にやさしいメロディー',
-    make: () => Object.assign(blank(), {
-      name: 'おやすみ', kind: 'daily', time: '22:30', days: [0, 1, 2, 3, 4, 5, 6],
-      action: { type: 'sound', sound: 'builtin:melody_relax', volume: 0.4, repeat: 1 },
-    }),
-  },
+var PRESETS = [
+  { title: 'お出かけの合図', desc: '平日 8:15 にピンポーン。10分前と5分前に予告',
+    make: function () {
+      var d = blankDraft();
+      d.name = 'お出かけの時間'; d.kind = 'weekly'; d.time = '08:15';
+      d.days = [0, 1, 2, 3, 4]; d.lead_times = [10, 5];
+      d.action = Object.assign(d.action, { type: 'both', sound: 'builtin:doorbell',
+        text: 'お出かけの時間です。', volume: 0.7 });
+      d.lead_action = { sound: 'builtin:melody_notice', speak_remaining: true };
+      return d;
+    } },
+  { title: '朝のメロディー', desc: '毎日 7:00 にやさしいメロディー',
+    make: function () {
+      var d = blankDraft();
+      d.name = '朝のメロディー'; d.time = '07:00'; d.days = [0, 1, 2, 3, 4, 5, 6];
+      d.action = Object.assign(d.action, { type: 'sound', sound: 'builtin:melody_morning', volume: 0.55 });
+      return d;
+    } },
+  { title: '時報', desc: '9:00〜21:00 の毎正時にウェストミンスター',
+    make: function () {
+      var d = blankDraft();
+      d.name = '時報'; d.kind = 'interval'; d.every_minutes = '60';
+      d.window = { start: '09:00', end: '21:00' }; d.days = [0, 1, 2, 3, 4, 5, 6];
+      d.action = Object.assign(d.action, { type: 'sound', sound: 'builtin:westminster', volume: 0.45 });
+      return d;
+    } },
+  { title: '休憩のうながし', desc: '平日 10:00〜18:00 の 90分ごと',
+    make: function () {
+      var d = blankDraft();
+      d.name = '休憩しよう'; d.kind = 'interval'; d.every_minutes = '90';
+      d.window = { start: '10:00', end: '18:00' }; d.days = [0, 1, 2, 3, 4];
+      d.action = Object.assign(d.action, { type: 'sound', sound: 'builtin:melody_notice', volume: 0.5 });
+      return d;
+    } },
+  { title: 'ゴミ出し', desc: '火・金 7:30 に読み上げ付き。15分前に予告',
+    make: function () {
+      var d = blankDraft();
+      d.name = 'ゴミ出し'; d.time = '07:30'; d.days = [1, 4]; d.lead_times = [15];
+      d.action = Object.assign(d.action, { type: 'both', sound: 'builtin:chime_up',
+        text: 'ゴミ出しの日です。', volume: 0.6 });
+      d.lead_action = { sound: 'builtin:ding', speak_remaining: false };
+      return d;
+    } },
+  { title: '毎月の支払い', desc: '毎月25日 10:00 に読み上げで知らせる',
+    make: function () {
+      var d = blankDraft();
+      d.name = '支払い日'; d.kind = 'monthly'; d.day_of_month = '25'; d.time = '10:00';
+      d.action = Object.assign(d.action, { type: 'both', sound: 'builtin:chime_up',
+        text: '今日は支払いの日です。', volume: 0.6 });
+      return d;
+    } },
+  { title: '記念日', desc: '毎年 決まった日に鳴らす',
+    make: function () {
+      var d = blankDraft();
+      d.name = '記念日'; d.kind = 'yearly'; d.month = '1'; d.day_of_month = '1'; d.time = '09:00';
+      d.action = Object.assign(d.action, { type: 'sound', sound: 'builtin:melody_morning', volume: 0.6 });
+      return d;
+    } },
+  { title: 'おやすみの合図', desc: '毎日 22:30 にやさしいメロディー',
+    make: function () {
+      var d = blankDraft();
+      d.name = 'おやすみ'; d.time = '22:30'; d.days = [0, 1, 2, 3, 4, 5, 6];
+      d.action = Object.assign(d.action, { type: 'sound', sound: 'builtin:melody_relax', volume: 0.4 });
+      return d;
+    } },
 ];
 
 function renderPresets() {
-  const box = $('#presets');
-  box.textContent = '';
-  for (const p of PRESETS) {
-    const b = el('button', 'preset');
+  var box = $('#presets');
+  box.innerHTML = '';
+  PRESETS.forEach(function (p) {
+    var b = el('button', 'preset');
     b.type = 'button';
     b.append(el('b', null, p.title), el('span', null, p.desc));
-    b.addEventListener('click', () => {
-      openEditor(p.make(), { asNew: true, presets: true });
-      toast(`「${p.title}」を読み込みました`);
+    b.addEventListener('click', function () {
+      draft = p.make();
+      openEditor(draft, { asNew: true });
     });
     box.append(b);
-  }
-  renderEmptyPresets();
+  });
 }
 
-// ---------------------------------------------------------------- タブ・大見出し
+// ------------------------------------------------------------------ 読み込みと更新
 
-function showTab(name) {
-  if (name === currentTab) {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    return;
-  }
-  scrollByTab[currentTab] = window.scrollY;
-  currentTab = name;
-  $$('.tab').forEach((t) => t.setAttribute('aria-selected', t.dataset.tab === name ? 'true' : 'false'));
-  $$('.view').forEach((v) => { v.hidden = v.id !== 'view-' + name; });
-  $$('.push').forEach((p) => { p.hidden = true; });
-  if (name === 'timeline') {
-    renderTimeline(false);
-    loadTimeline(true);
-  } else {
-    window.scrollTo(0, scrollByTab[name] || 0);
-  }
+async function refresh() {
+  try {
+    var data = await api('GET', '/api/state');
+    Object.assign(state, data);
+    renderHero();
+    renderStartHere();
+    renderList();
+    renderSounds();
+    renderSettings();
+    renderLog();
+    renderAbout();
+    await loadWeek();
+  } catch (e) { fail(e); }
 }
 
-function watchLargeTitles() {
-  if (!('IntersectionObserver' in window)) return;
-  for (const view of $$('.view')) {
-    const h1 = view.querySelector('.large-title');
-    const bar = view.querySelector('.navbar');
-    if (!h1 || !bar) continue;
-    new IntersectionObserver(([entry]) => {
-      if (view.hidden) return;
-      bar.classList.toggle('is-scrolled', !entry.isIntersecting);
-    }, { rootMargin: '-52px 0px 0px 0px', threshold: 0 }).observe(h1);
-  }
+async function refreshLive() {
+  try {
+    var data = await api('GET', '/api/now');
+    state.next_events = data.next_events;
+    state.log = data.log;
+    renderHero();
+    renderLog();
+  } catch (e) { /* 一時的な失敗は黙って見送る */ }
 }
 
-// ---------------------------------------------------------------- 配線
+function tickClock() {
+  $('#clock').textContent = SL.fmtClock(new Date());
+  var next = state.next_events[0];
+  if (next) $('#hero-count').textContent = SL.fmtCountdown(next.at);
+}
+
+// ------------------------------------------------------------------ 配線
 
 function wire() {
-  $$('.tab').forEach((tab) => tab.addEventListener('click', () => showTab(tab.dataset.tab)));
-  $('.tabbar').addEventListener('keydown', (e) => {
-    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-    const tabs = $$('.tab');
-    const i = tabs.findIndex((t) => t.dataset.tab === currentTab);
-    const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
-    showTab(next.dataset.tab);
-    next.focus();
+  $$('.tab').forEach(function (t) {
+    t.addEventListener('click', function () { setView(t.dataset.view); });
   });
-
-  // 予定
-  $('#new-btn').addEventListener('click', () => openEditor(null));
-  $('#edit-btn').addEventListener('click', () => setEditMode(!editMode));
-
-  // タイムライン
-  $('#tl-prev').addEventListener('click', () => shiftWeek(-1));
-  $('#tl-next').addEventListener('click', () => shiftWeek(1));
-  $('#tl-today').addEventListener('click', goToday);
-  let sx = null, sy = null;
-  const head = $('.tl-head');
-  head.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
-  head.addEventListener('touchend', (e) => {
-    if (sx === null) return;
-    const dx = e.changedTouches[0].clientX - sx;
-    const dy = e.changedTouches[0].clientY - sy;
-    sx = null;
-    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) shiftWeek(dx < 0 ? 1 : -1);
-  }, { passive: true });
-
-  // サウンド
-  $('#sound-edit-btn').addEventListener('click', () => setSoundEdit(!soundEdit));
-  $('#upload').addEventListener('change', (e) => uploadFiles(Array.from(e.target.files || [])));
-
-  // 設定（即時保存）
-  $('#master').addEventListener('click', () => {
-    const on = !isOn($('#master'));
-    setSwitch($('#master'), on);
-    setMaster(on);
-  });
-  $('#stop-btn').addEventListener('click', stopSound);
-  $('#set-volume').addEventListener('input', (e) => {
-    $('#vol-out').textContent = Math.round(Number(e.target.value) * 100) + '%';
-    setRangeFill(e.target);
-  });
-  $('#set-volume').addEventListener('change', (e) => saveSettings({ default_volume: Number(e.target.value) }, '音量を保存しました'));
-  $('#set-rate').addEventListener('input', (e) => { $('#rate-out').textContent = e.target.value; setRangeFill(e.target); });
-  $('#set-rate').addEventListener('change', (e) => saveSettings({ speak_rate: Number(e.target.value) }, '速さを保存しました'));
-  $('#quiet-enabled').addEventListener('click', () => {
-    const on = !isOn($('#quiet-enabled'));
-    setSwitch($('#quiet-enabled'), on);
-    saveSettings({ quiet_hours: { enabled: on } }, on ? '静音時間帯をオンにしました' : '静音時間帯をオフにしました');
-  });
-  const saveQuiet = () => {
-    const start = $('#quiet-start').value, end = $('#quiet-end').value;
-    if (!start || !end) return;
-    saveSettings({ quiet_hours: { enabled: isOn($('#quiet-enabled')), start, end } }, '静音時間帯を保存しました');
-  };
-  $('#quiet-start').addEventListener('change', saveQuiet);
-  $('#quiet-end').addEventListener('change', saveQuiet);
-  $('#set-voice-btn').addEventListener('click', () => {
-    renderVoiceList($('#set-voice-list'), state.settings.default_voice, (v) => saveSettings({ default_voice: v }, '声を保存しました'));
-    openPush('#push-voice');
-  });
-  $('#log-btn').addEventListener('click', () => { renderLog(); openPush('#push-log'); loadLog(); });
-  $('#reload-log').addEventListener('click', loadLog);
-  $$('[data-back]').forEach((b) => b.addEventListener('click', () => closePush(b.closest('.push'))));
-
-  // 編集シート
-  const ed = $('#editor');
-  $('#editor-save').addEventListener('click', save);
-  $('#editor-cancel').addEventListener('click', closeEditor);
-  ed.addEventListener('cancel', (e) => {
-    e.preventDefault();
-    if (!popPage()) closeEditor();
-  });
-  ed.addEventListener('close', () => {
-    document.documentElement.classList.remove('is-locked', 'sheet-open');
-    const t = $('#toast');
-    if (t.parentElement !== document.body) document.body.append(t);
-  });
-  $$('[data-push]').forEach((b) => b.addEventListener('click', () => {
-    if (b.dataset.soundTarget) { soundTarget = b.dataset.soundTarget; renderSoundPage(); }
-    pushPage('#' + b.dataset.push);
-  }));
-  $$('[data-pop]').forEach((b) => b.addEventListener('click', popPage));
-  $('#editor-dup').addEventListener('click', () => {
-    const src = state.schedules.find((s) => s.id === editing);
-    if (src) duplicate(src);
-  });
-  $('#editor-del').addEventListener('click', async () => {
-    const src = state.schedules.find((s) => s.id === editing);
-    if (src && await removeSchedule(src)) closeEditor();
-  });
-
-  // 入力 → 下書き
-  $('#f-name').addEventListener('input', (e) => { draft.name = e.target.value; });
-  $('#f-note').addEventListener('input', (e) => { draft.note = e.target.value; });
-  $('#f-time').addEventListener('change', (e) => { if (e.target.value) draft.time = e.target.value; });
-  for (const id of ['#f-date', '#f-date2']) {
-    $(id).addEventListener('change', (e) => {
-      if (!e.target.value) return;
-      draft.date = e.target.value;
-      $('#f-date').value = $('#f-date2').value = draft.date;
-      renderEditorValues();
+  $$('#filters .pill').forEach(function (b) {
+    b.addEventListener('click', function () {
+      filter = b.dataset.filter;
+      $$('#filters .pill').forEach(function (x) { x.classList.toggle('is-on', x === b); });
+      renderList();
     });
-  }
-  for (const [a, b, key] of [['#f-win-start', '#f-win-start2', 'start'], ['#f-win-end', '#f-win-end2', 'end']]) {
-    for (const id of [a, b]) {
-      $(id).addEventListener('change', (e) => {
-        if (!e.target.value) return;
-        draft.window[key] = e.target.value;
-        $(a).value = $(b).value = e.target.value;
+  });
+
+  $('#stop-btn').addEventListener('click', async function () {
+    try { await api('POST', '/api/stop'); toast('止めました'); } catch (e) { fail(e); }
+  });
+  $('#master').addEventListener('change', async function (ev) {
+    try {
+      var data = await api('PUT', '/api/settings', { master_enabled: ev.target.checked });
+      state.settings = data.settings;
+      renderSettings();
+      toast(ev.target.checked ? '全体をオンにしました' : '全体をオフにしました');
+    } catch (e) { ev.target.checked = !ev.target.checked; fail(e); }
+  });
+
+  $('#week-prev').addEventListener('click', function () { shiftWeek(-1); });
+  $('#week-next').addEventListener('click', function () { shiftWeek(1); });
+  $('#week-label').addEventListener('click', function () {
+    weekStartISO = SL.isoDate(SL.weekStart(new Date()));
+    loadWeek();
+  });
+
+  $('#fab').addEventListener('click', function () { openEditor(null); });
+  $('#new-btn').addEventListener('click', function () { openEditor(null); });
+  $('#start-blank').addEventListener('click', function () { openEditor(null); });
+  $('#day-add').addEventListener('click', function () {
+    var iso = daySheetDate;
+    $('#day-sheet').close();
+    openEditor(null, { dateISO: iso, kind: 'once' });
+  });
+  $('#day-close').addEventListener('click', function () { $('#day-sheet').close(); });
+
+  $('#editor-cancel').addEventListener('click', function () { $('#editor').close(); });
+  $('#editor-save').addEventListener('click', save);
+  $('#editor-delete').addEventListener('click', removeCurrent);
+  $('#editor-copy').addEventListener('click', copyCurrent);
+
+  $$('#f-kind button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      draft.kind = b.dataset.kind;
+      setSeg('#f-kind', 'kind', draft.kind);
+      syncEditor();
+    });
+  });
+  $$('#f-atype button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      draft.action.type = b.dataset.atype;
+      setSeg('#f-atype', 'atype', draft.action.type);
+      syncEditor();
+    });
+  });
+  $$('[data-days]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      draft.days = b.dataset.days.split(',').map(Number);
+      renderDayButtons();
+      syncEditor();
+    });
+  });
+  ['#f-name', '#f-time', '#f-date', '#f-dom', '#f-month', '#f-every', '#f-win-start',
+   '#f-win-end', '#f-note', '#f-text', '#f-voice', '#f-volume', '#f-repeat', '#f-lead-speak']
+    .forEach(function (sel) {
+      $(sel).addEventListener('input', syncEditor);
+      $(sel).addEventListener('change', syncEditor);
+    });
+
+  $('#f-test').addEventListener('click', function () {
+    syncEditor();
+    var a = draft.action;
+    api('POST', '/api/preview', {
+      type: a.type, sound: a.sound, text: a.text || '読み上げの見本です',
+      voice: a.voice, rate: a.rate, volume: a.volume,
+    }).catch(fail);
+  });
+  $('#f-lead-test').addEventListener('click', function () {
+    syncEditor();
+    var m = draft.lead_times[0] || 5;
+    var speak = draft.lead_action.speak_remaining;
+    api('POST', '/api/preview', {
+      type: speak ? 'both' : 'sound', sound: draft.lead_action.sound,
+      text: (draft.name || 'その予定') + 'まで、あと' + m + '分です。',
+      voice: draft.action.voice, volume: draft.action.volume,
+    }).catch(fail);
+  });
+
+  $('#set-volume').addEventListener('input', function (e) {
+    $('#vol-out').textContent = SL.volumePct(e.target.value);
+  });
+  $('#vol-test').addEventListener('click', function () {
+    api('POST', '/api/preview', {
+      type: 'sound', sound: 'builtin:ding', volume: Number($('#set-volume').value),
+    }).catch(fail);
+  });
+  $('#set-rate').addEventListener('input', function (e) {
+    $('#rate-out').textContent = e.target.value;
+  });
+  $('#voice-test').addEventListener('click', function () {
+    api('POST', '/api/preview', {
+      type: 'speak', text: 'お出かけの時間です。', voice: $('#set-voice').value,
+      rate: Number($('#set-rate').value), volume: Number($('#set-volume').value),
+    }).catch(fail);
+  });
+  ['#quiet-enabled', '#quiet-start', '#quiet-end'].forEach(function (sel) {
+    $(sel).addEventListener('change', function () {
+      $('#quiet-desc').textContent = SL.describeQuiet({
+        enabled: $('#quiet-enabled').checked,
+        start: $('#quiet-start').value, end: $('#quiet-end').value,
       });
-    }
-  }
-  $('#f-every').addEventListener('input', (e) => {
-    const n = Number(e.target.value);
-    if (n >= 1) { draft.every_minutes = Math.min(1440, Math.round(n)); renderEditorValues(); }
+    });
   });
-  $$('#f-kind button').forEach((b) => b.addEventListener('click', () => {
-    draft.kind = b.dataset.kind;
-    if (draft.kind === 'interval' && !draft.days.length) draft.days = [0, 1, 2, 3, 4, 5, 6];
-    renderRepeatPage();
-    renderEditorValues();
-  }));
-  $$('#f-quick button').forEach((b) => b.addEventListener('click', () => {
-    draft.days = b.dataset.days.split(',').map(Number);
-    renderRepeatPage();
-  }));
-  $('#f-volume').addEventListener('input', (e) => { draft.action.volume = Number(e.target.value); renderEditorValues(); });
-  $('#f-test').addEventListener('click', previewMain);
-  $('#f-repeat-dec').addEventListener('click', () => { draft.action.repeat = Math.max(1, (draft.action.repeat || 1) - 1); renderEditorValues(); });
-  $('#f-repeat-inc').addEventListener('click', () => { draft.action.repeat = Math.min(10, (draft.action.repeat || 1) + 1); renderEditorValues(); });
-  $('#f-lead-speak').addEventListener('click', () => {
-    draft.lead_action.speak_remaining = !draft.lead_action.speak_remaining;
-    setSwitch($('#f-lead-speak'), draft.lead_action.speak_remaining);
-  });
-  $('#f-lead-test').addEventListener('click', previewLead);
-  $('#f-speak').addEventListener('click', () => {
-    draft._speak = !draft._speak;
-    renderSpeakPage();
-    if (draft._speak) setTimeout(() => $('#f-text').focus(), 50);
-  });
-  $('#f-text').addEventListener('input', (e) => { draft.action.text = e.target.value; });
-  $('#f-rate').addEventListener('input', (e) => {
-    draft.action.rate = Number(e.target.value);
-    $('#f-rate-out').textContent = e.target.value;
-    setRangeFill(e.target);
+  $('#save-settings').addEventListener('click', async function () {
+    try {
+      var data = await api('PUT', '/api/settings', {
+        default_volume: Number($('#set-volume').value),
+        default_voice: $('#set-voice').value,
+        speak_rate: Number($('#set-rate').value),
+        quiet_hours: {
+          enabled: $('#quiet-enabled').checked,
+          start: $('#quiet-start').value,
+          end: $('#quiet-end').value,
+        },
+      });
+      state.settings = data.settings;
+      renderSettings();
+      await loadWeek();
+      toast('設定を保存しました');
+    } catch (e) { fail(e); }
   });
 
-  // デスクトップ Chrome ではアイコンを隠しているので、タップでピッカーを出す
-  $$('input[type="time"], input[type="date"]').forEach((i) => i.addEventListener('click', () => {
-    try { i.showPicker(); } catch { /* iOS などはネイティブの動作に任せる */ }
-  }));
-
-  // 確認シート
-  $('#as-ok').addEventListener('click', () => closeSheet(true));
-  $('#as-cancel').addEventListener('click', () => closeSheet(false));
-  $('#actionsheet').addEventListener('cancel', (e) => { e.preventDefault(); closeSheet(false); });
-  $('#actionsheet').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeSheet(false); });
-
-  // n キーで新規（PC 用）
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !e.altKey && !$('dialog[open]') &&
-        !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
-      e.preventDefault();
-      openEditor(null);
-    }
+  $('#upload').addEventListener('change', function (e) {
+    uploadFiles(Array.prototype.slice.call(e.target.files || []));
   });
+  $('#reload-log').addEventListener('click', refreshLive);
 
-  // 画面が見えていない間はポーリングを止める
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { clearInterval(pollTimer); pollTimer = null; }
-    else { poll(); startPolling(); }
+  document.addEventListener('keydown', function (e) {
+    var typing = ['INPUT', 'TEXTAREA', 'SELECT'].indexOf(document.activeElement.tagName) >= 0;
+    if (typing || e.metaKey || e.ctrlKey) return;
+    if (e.key === 'n' && !$('#editor').open) { e.preventDefault(); openEditor(null); }
+    if (e.key === 'ArrowLeft' && $('#view-week').classList.contains('is-active')) shiftWeek(-1);
+    if (e.key === 'ArrowRight' && $('#view-week').classList.contains('is-active')) shiftWeek(1);
   });
+}
+
+function viewFromHash() {
+  return (location.hash || '').replace(/^#/, '') || 'week';
 }
 
 wire();
-watchLargeTitles();
+window.addEventListener('hashchange', function () { setView(viewFromHash(), true); });
+setView(viewFromHash(), true);
 renderPresets();
-refresh().then(() => renderPresets());
-startPolling();
+tickClock();
+setInterval(tickClock, 1000);
+setInterval(refreshLive, 15000);
+refresh();

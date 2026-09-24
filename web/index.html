@@ -2,469 +2,346 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#f2f0eb" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#141312" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="sounder">
-<meta name="format-detection" content="telephone=no">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="icon" type="image/png" href="/apple-touch-icon.png">
 <title>sounder</title>
-<link rel="preload" href="/fonts/MPLUSRounded1c-Regular.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/style.css">
+<link rel="icon" href="/icon-192.png" sizes="192x192">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#b4551f" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1e2023" media="(prefers-color-scheme: dark)">
 </head>
 <body>
-<div class="app">
 
-  <!-- ===== 予定 ===== -->
-  <section class="view" id="view-schedules" role="tabpanel" aria-labelledby="tab-schedules">
-    <header class="navbar">
-      <div class="navbar-inner">
-        <button type="button" class="nav-btn" id="edit-btn">編集</button>
-        <span class="nav-title" aria-hidden="true">予定</span>
-        <button type="button" class="nav-icon" id="new-btn" aria-label="新しい予定">
-          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-        </button>
-      </div>
-    </header>
-    <h1 class="large-title">予定</h1>
-    <div class="banner" id="banner"></div>
-    <div id="sched-groups"></div>
-    <div class="empty" id="sched-empty" hidden>
-      <p class="empty-title">まだ予定がありません</p>
-      <p class="empty-text">右上の ＋ から作るか、よく使う型を選んでください。</p>
-      <div class="group-block">
-        <h2 class="group-head">よく使う型から作る</h2>
-        <div class="group" id="empty-presets"></div>
-      </div>
-    </div>
-  </section>
+<header class="bar">
+  <h1 class="brand"><span aria-hidden="true">🔔</span> sounder</h1>
+  <div class="bar-clock" id="clock" aria-live="off">--:--</div>
+  <div class="bar-right">
+    <button class="icon-btn" id="stop-btn" title="鳴っている音を止める" aria-label="音を止める">
+      <span aria-hidden="true">◼</span>
+    </button>
+    <label class="switch" title="全体のオン／オフ">
+      <input type="checkbox" id="master">
+      <span class="track" aria-hidden="true"></span>
+      <span class="sr">全体を鳴らす</span>
+    </label>
+  </div>
+</header>
 
-  <!-- ===== タイムライン ===== -->
-  <section class="view" id="view-timeline" role="tabpanel" aria-labelledby="tab-timeline" hidden>
-    <header class="tl-head">
-      <div class="tl-top">
-        <div class="tl-title">
-          <span class="tl-month" id="tl-month"></span>
-          <span class="tl-day" id="tl-day"></span>
-        </div>
-        <button type="button" class="nav-btn" id="tl-today">今日</button>
-        <button type="button" class="circle-btn" id="tl-prev" aria-label="前の週">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
-        </button>
-        <button type="button" class="circle-btn" id="tl-next" aria-label="次の週">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
-        </button>
-      </div>
-      <div class="week" id="tl-week" role="group" aria-label="日付を選ぶ"></div>
-    </header>
-    <div class="tl-axis" id="tl-axis"></div>
-    <p class="tl-empty" id="tl-empty" hidden>この日の予定はありません</p>
-  </section>
-
-  <!-- ===== サウンド ===== -->
-  <section class="view" id="view-sounds" role="tabpanel" aria-labelledby="tab-sounds" hidden>
-    <header class="navbar">
-      <div class="navbar-inner">
-        <span class="nav-spacer"></span>
-        <span class="nav-title" aria-hidden="true">サウンド</span>
-        <button type="button" class="nav-btn nav-right" id="sound-edit-btn" hidden>編集</button>
-      </div>
-    </header>
-    <h1 class="large-title">サウンド</h1>
-    <div id="sound-groups"></div>
-    <input type="file" id="upload" accept="audio/*" multiple hidden>
-  </section>
-
-  <!-- ===== 設定 ===== -->
-  <section class="view" id="view-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
-    <header class="navbar">
-      <div class="navbar-inner">
-        <span class="nav-spacer"></span>
-        <span class="nav-title" aria-hidden="true">設定</span>
-        <span class="nav-spacer"></span>
-      </div>
-    </header>
-    <h1 class="large-title">設定</h1>
-
-    <div class="group-block">
-      <h2 class="group-head">全体</h2>
-      <div class="group">
-        <div class="cell">
-          <span class="cell-label" id="master-label">すべての予定を鳴らす</span>
-          <button type="button" class="switch" id="master" role="switch" aria-checked="true" aria-labelledby="master-label"></button>
-        </div>
-        <button type="button" class="cell cell-button" id="stop-btn">いま鳴っている音を止める</button>
-      </div>
-      <p class="footnote">オフにすると、予定を消さずに全部止められます。</p>
-    </div>
-
-    <div class="group-block">
-      <h2 class="group-head">既定</h2>
-      <div class="group">
-        <div class="cell cell-slider">
-          <span class="cell-label" id="set-volume-label">音量</span>
-          <input type="range" id="set-volume" min="0" max="1.5" step="0.05" aria-labelledby="set-volume-label">
-          <output class="cell-value" id="vol-out"></output>
-        </div>
-        <button type="button" class="cell cell-link" id="set-voice-btn">
-          <span class="cell-label">読み上げの声</span>
-          <span class="cell-value" id="set-voice-val"></span>
-          <svg class="chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
-        </button>
-        <div class="cell cell-slider">
-          <span class="cell-label" id="set-rate-label">話す速さ</span>
-          <input type="range" id="set-rate" min="90" max="400" step="10" aria-labelledby="set-rate-label">
-          <output class="cell-value" id="rate-out"></output>
-        </div>
-      </div>
-    </div>
-
-    <div class="group-block">
-      <h2 class="group-head">静音時間帯</h2>
-      <div class="group">
-        <div class="cell">
-          <span class="cell-label" id="quiet-label">静音時間帯を使う</span>
-          <button type="button" class="switch" id="quiet-enabled" role="switch" aria-checked="false" aria-labelledby="quiet-label"></button>
-        </div>
-        <label class="cell">
-          <span class="cell-label">開始</span>
-          <input type="time" class="cell-input" id="quiet-start">
-        </label>
-        <label class="cell">
-          <span class="cell-label">終了</span>
-          <input type="time" class="cell-input" id="quiet-end">
-        </label>
-      </div>
-      <p class="footnote">この時間帯に来た予定は鳴らさずに見送り、ログに残します（深夜の誤作動対策）。</p>
-    </div>
-
-    <div class="group-block">
-      <h2 class="group-head">記録</h2>
-      <div class="group">
-        <button type="button" class="cell cell-link" id="log-btn">
-          <span class="cell-label">実行ログ</span>
-          <svg class="chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
-        </button>
-      </div>
-    </div>
-
-    <div class="group-block">
-      <h2 class="group-head">この Mac について</h2>
-      <div class="group" id="about"></div>
-    </div>
-  </section>
-</div>
-
-<!-- ===== 下タブバー ===== -->
-<nav class="tabbar" role="tablist" aria-label="画面の切り替え">
-  <button type="button" class="tab" id="tab-schedules" role="tab" data-tab="schedules" aria-selected="true" aria-controls="view-schedules">
-    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-    <span>予定</span>
-  </button>
-  <button type="button" class="tab" id="tab-timeline" role="tab" data-tab="timeline" aria-selected="false" aria-controls="view-timeline">
-    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v16M10 7h8M10 12h6M10 17h9"/></svg>
-    <span>タイムライン</span>
-  </button>
-  <button type="button" class="tab" id="tab-sounds" role="tab" data-tab="sounds" aria-selected="false" aria-controls="view-sounds">
-    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>
-    <span>サウンド</span>
-  </button>
-  <button type="button" class="tab" id="tab-settings" role="tab" data-tab="settings" aria-selected="false" aria-controls="view-settings">
-    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8M16 5v4M10 15v4"/></svg>
-    <span>設定</span>
-  </button>
+<nav class="tabbar" role="tablist">
+  <button class="tab is-active" data-view="week" role="tab"><span aria-hidden="true">🗓</span>週</button>
+  <button class="tab" data-view="list" role="tab"><span aria-hidden="true">📋</span>予定</button>
+  <button class="tab" data-view="sounds" role="tab"><span aria-hidden="true">🎵</span>音</button>
+  <button class="tab" data-view="settings" role="tab"><span aria-hidden="true">⚙️</span>設定</button>
 </nav>
 
-<!-- ===== 設定の子画面 ===== -->
-<div class="push" id="push-voice" hidden>
-  <header class="navbar is-solid">
-    <div class="navbar-inner">
-      <button type="button" class="nav-back" data-back>
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>設定
-      </button>
-      <span class="nav-title is-on">読み上げの声</span>
-      <span class="nav-spacer"></span>
+<main>
+  <!-- ===================== 週 ===================== -->
+  <section class="view is-active" id="view-week" aria-label="週カレンダー">
+    <div class="hero" id="hero">
+      <div class="hero-label">次に鳴る</div>
+      <div class="hero-main">
+        <div class="hero-when" id="hero-when">—</div>
+        <div class="hero-name" id="hero-name">予定はありません</div>
+      </div>
+      <div class="hero-note" id="hero-note" hidden></div>
+      <div class="hero-foot">
+        <span class="hero-count" id="hero-count"></span>
+        <button class="btn btn-ghost" id="hero-test" hidden>▶ 試聴</button>
+      </div>
     </div>
+
+    <div class="start-here" id="start-here" hidden>
+      <p>まだ予定がありません。よく使う型から選ぶとすぐ作れます。</p>
+      <div class="start-grid" id="start-grid"></div>
+      <button class="btn btn-ghost btn-wide" id="start-blank">自分で作る</button>
+    </div>
+
+    <div class="weeknav">
+      <button class="icon-btn" id="week-prev" aria-label="前の週">‹</button>
+      <button class="weeknav-label" id="week-label">—</button>
+      <button class="icon-btn" id="week-next" aria-label="次の週">›</button>
+    </div>
+
+    <div class="week" id="week" role="grid"></div>
+
+    <div id="today-wrap">
+      <h2 id="today-head">今日これから鳴るもの</h2>
+      <div class="today-list" id="today-list"></div>
+    </div>
+
+    <p class="legend">
+      <span class="legend-item"><i class="dot dot-main"></i>予定</span>
+      <span class="legend-item"><i class="dot dot-lead"></i>事前の予告</span>
+      <span class="legend-item"><i class="dot dot-quiet"></i>鳴らさない時間</span>
+      <span class="legend-hint">日付をタップすると その日の一覧、＋で追加できます。</span>
+    </p>
+  </section>
+
+  <!-- ===================== 予定 ===================== -->
+  <section class="view" id="view-list" aria-label="予定の一覧">
+    <div class="list-head">
+      <h2>登録済みの予定 <span class="count" id="sched-count"></span></h2>
+      <button class="btn btn-primary new-btn" id="new-btn">＋ 新しい予定</button>
+      <div class="filters" id="filters">
+        <button class="pill is-on" data-filter="all">すべて</button>
+        <button class="pill" data-filter="on">オンだけ</button>
+        <button class="pill" data-filter="off">オフだけ</button>
+      </div>
+    </div>
+    <div id="sched-list" class="cards"></div>
+    <div class="empty" id="sched-empty" hidden>
+      <p>まだ予定がありません。</p>
+      <p class="hint">下の「＋」から作るか、よく使う型を選んでください。</p>
+    </div>
+
+    <h2 class="preset-head">よく使う型から作る</h2>
+    <div class="preset-grid" id="presets"></div>
+  </section>
+
+  <!-- ===================== 音 ===================== -->
+  <section class="view" id="view-sounds" aria-label="サウンド">
+    <h2>内蔵サウンド</h2>
+    <p class="hint">この Mac の中で合成した音です。タップで試聴できます。</p>
+    <div class="sound-grid" id="lib-builtin"></div>
+
+    <h2>自分のファイル</h2>
+    <p class="hint">mp3 / m4a / wav / aiff など、30MB まで。外部には送信しません。</p>
+    <label class="uploader">
+      <input type="file" id="upload" accept="audio/*" multiple>
+      <span class="uploader-face">＋ 音楽ファイルを追加</span>
+    </label>
+    <p class="hint" id="upload-status" aria-live="polite"></p>
+    <div class="sound-grid" id="lib-user"></div>
+
+    <h2>システムサウンド</h2>
+    <p class="hint">macOS に入っている効果音です。</p>
+    <div class="sound-grid" id="lib-system"></div>
+  </section>
+
+  <!-- ===================== 設定 ===================== -->
+  <section class="view" id="view-settings" aria-label="設定">
+    <h2>音の大きさと声</h2>
+    <div class="panel">
+      <div class="field">
+        <label for="set-volume">既定の音量 <output id="vol-out"></output></label>
+        <div class="row">
+          <input type="range" id="set-volume" min="0" max="1.5" step="0.05">
+          <button class="btn btn-ghost" id="vol-test">▶</button>
+        </div>
+        <p class="hint">100% より上げると小さい音源でも聞こえやすくなります。</p>
+      </div>
+      <div class="field">
+        <label for="set-voice">読み上げの声</label>
+        <div class="row">
+          <select id="set-voice"></select>
+          <button class="btn btn-ghost" id="voice-test">▶</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="set-rate">話す速さ <output id="rate-out"></output></label>
+        <input type="range" id="set-rate" min="90" max="400" step="10">
+      </div>
+    </div>
+
+    <h2>鳴らさない時間（禁止時間）</h2>
+    <div class="panel">
+      <label class="check">
+        <input type="checkbox" id="quiet-enabled">
+        <span>禁止時間を使う</span>
+      </label>
+      <div class="row row-times" id="quiet-times">
+        <label class="field field-inline"><span>開始</span><input type="time" id="quiet-start"></label>
+        <span class="row-arrow" aria-hidden="true">→</span>
+        <label class="field field-inline"><span>終了</span><input type="time" id="quiet-end"></label>
+      </div>
+      <p class="hint" id="quiet-desc"></p>
+    </div>
+
+    <button class="btn btn-primary btn-wide" id="save-settings">設定を保存</button>
+
+    <h2>実行ログ</h2>
+    <div class="panel panel-flush">
+      <ul class="log" id="log"></ul>
+    </div>
+    <button class="btn btn-ghost btn-wide" id="reload-log">ログを更新</button>
+
+    <h2>この Mac について</h2>
+    <dl class="meta" id="about"></dl>
+  </section>
+</main>
+
+<button class="fab" id="fab" aria-label="新しい予定を追加">＋</button>
+
+
+<!-- ===================== その日の一覧 ===================== -->
+<dialog class="sheet" id="day-sheet">
+  <header class="sheet-head">
+    <h2 id="day-title">—</h2>
+    <button class="icon-btn" id="day-close" aria-label="閉じる">✕</button>
   </header>
-  <div class="push-scroll" id="set-voice-list"></div>
-</div>
+  <div class="sheet-body" id="day-body"></div>
+  <footer class="sheet-foot">
+    <button class="btn btn-primary btn-wide" id="day-add">＋ この日に予定を追加</button>
+  </footer>
+</dialog>
 
-<div class="push" id="push-log" hidden>
-  <header class="navbar is-solid">
-    <div class="navbar-inner">
-      <button type="button" class="nav-back" data-back>
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>設定
-      </button>
-      <span class="nav-title is-on">実行ログ</span>
-      <button type="button" class="nav-btn nav-right" id="reload-log">更新</button>
-    </div>
+<!-- ===================== 予定の編集 ===================== -->
+<dialog class="sheet sheet-full" id="editor">
+  <header class="sheet-head">
+    <button class="icon-btn" id="editor-cancel" aria-label="キャンセル">✕</button>
+    <h2 id="editor-title">新しい予定</h2>
+    <button class="btn btn-primary" id="editor-save">保存</button>
   </header>
-  <div class="push-scroll">
-    <div class="group-block"><div class="group" id="log"></div></div>
-  </div>
-</div>
 
-<!-- ===== 予定の編集シート ===== -->
-<dialog id="editor" class="sheet" aria-labelledby="editor-title">
-  <div class="sheet-stack">
+  <div class="sheet-body">
+    <div class="field">
+      <label for="f-name">名前</label>
+      <input type="text" id="f-name" maxlength="80" placeholder="例）お出かけの時間"
+             autocomplete="off" enterkeyhint="done">
+    </div>
 
-    <div class="sheet-page is-current" id="pg-main">
-      <header class="sheet-nav">
-        <button type="button" class="nav-btn" id="editor-cancel">キャンセル</button>
-        <h2 class="sheet-title" id="editor-title">予定を追加</h2>
-        <button type="button" class="nav-btn nav-right is-bold" id="editor-save">保存</button>
-      </header>
-      <div class="sheet-scroll">
-        <p class="form-error" id="editor-error" role="alert" hidden></p>
+    <h3>いつ鳴らす</h3>
+    <div class="segmented segmented-wrap" id="f-kind">
+      <button type="button" data-kind="weekly" class="is-active">毎週</button>
+      <button type="button" data-kind="monthly">毎月</button>
+      <button type="button" data-kind="yearly">毎年</button>
+      <button type="button" data-kind="once">1回だけ</button>
+      <button type="button" data-kind="interval">間隔</button>
+    </div>
 
-        <div class="preset-strip" id="preset-strip">
-          <h3 class="group-head">よく使う型</h3>
-          <div class="preset-scroll" id="presets"></div>
+    <div class="panel">
+      <div data-kind-for="weekly monthly yearly once">
+        <div class="field">
+          <label for="f-time">時刻</label>
+          <input type="time" id="f-time" class="input-time">
         </div>
+      </div>
 
-        <div class="bigtime">
-          <div data-kind-for="once" class="bigtime-date">
-            <input type="date" id="f-date" class="big-input big-date" aria-label="日付">
-          </div>
-          <div data-kind-for="daily once">
-            <input type="time" id="f-time" class="big-input" aria-label="時刻">
-          </div>
-          <div data-kind-for="interval" class="bigtime-range">
-            <input type="time" id="f-win-start" class="big-input big-mid" aria-label="開始">
-            <span class="bigtime-dash">–</span>
-            <input type="time" id="f-win-end" class="big-input big-mid" aria-label="終了">
-          </div>
-          <p data-kind-for="interval" class="bigtime-caption" id="f-every-caption"></p>
-        </div>
-
-        <div class="group-block">
-          <div class="group">
-            <button type="button" class="cell cell-link" data-push="pg-repeat">
-              <span class="cell-label">繰り返し</span>
-              <span class="cell-value" id="v-repeat"></span>
-              <svg class="chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
-            </button>
-            <label class="cell">
-              <span class="cell-label">名前</span>
-              <input type="text" class="cell-input cell-text" id="f-name" maxlength="80" placeholder="例）お出かけの時間" autocomplete="off">
-            </label>
-          </div>
-        </div>
-
-        <div class="group-block">
-          <h3 class="group-head">鳴らすもの</h3>
-          <div class="group">
-            <button type="button" class="cell cell-link" data-push="pg-sound" data-sound-target="main">
-              <span class="cell-label">サウンド</span>
-              <span class="cell-value" id="v-sound"></span>
-              <svg class="chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
-            </button>
-            <button type="button" class="cell cell-link" data-push="pg-speak">
-              <span class="cell-label">読み上げ</span>
-              <span class="cell-value" id="v-speak"></span>
-              <svg class="chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
-            </button>
-            <div class="cell cell-slider">
-              <svg class="cell-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/></svg>
-              <input type="range" id="f-volume" min="0" max="1.5" step="0.05" aria-label="音量">
-              <output class="cell-value" id="f-vol-out"></output>
-              <button type="button" class="play-btn" id="f-test" aria-label="試聴">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 4l13 8-13 8z"/></svg>
-              </button>
-            </div>
-            <div class="cell">
-              <span class="cell-label" id="f-repeat-label">繰り返し回数</span>
-              <div class="stepper" role="group" aria-labelledby="f-repeat-label">
-                <button type="button" id="f-repeat-dec" aria-label="回数を減らす">−</button>
-                <output id="f-repeat-out"></output>
-                <button type="button" id="f-repeat-inc" aria-label="回数を増やす">＋</button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="group-block">
-          <h3 class="group-head">事前の予告</h3>
-          <div class="group">
-            <button type="button" class="cell cell-link" data-push="pg-lead">
-              <span class="cell-label">予告</span>
-              <span class="cell-value" id="v-lead"></span>
-              <svg class="chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
-            </button>
-            <div class="cell" data-leads-only>
-              <span class="cell-label" id="f-lead-speak-label">「あと○分です」と読み上げ</span>
-              <button type="button" class="switch" id="f-lead-speak" role="switch" aria-checked="false" aria-labelledby="f-lead-speak-label"></button>
-            </div>
-            <button type="button" class="cell cell-link" data-leads-only data-push="pg-sound" data-sound-target="lead">
-              <span class="cell-label">予告のサウンド</span>
-              <span class="cell-value" id="v-lead-sound"></span>
-              <svg class="chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
-            </button>
-            <button type="button" class="cell cell-button" data-leads-only id="f-lead-test">予告を試聴</button>
-          </div>
-          <p class="footnote">出発前などに、本番より先に短い合図を鳴らします。</p>
-        </div>
-
-        <div class="group-block">
-          <div class="group">
-            <label class="cell">
-              <span class="cell-label">メモ</span>
-              <input type="text" class="cell-input cell-text" id="f-note" maxlength="200" placeholder="任意" autocomplete="off">
-            </label>
-          </div>
-          <p class="footnote" id="f-history" hidden></p>
-        </div>
-
-        <div class="group-block" id="editor-danger" hidden>
-          <div class="group">
-            <button type="button" class="cell cell-button" id="editor-dup">この予定を複製</button>
-            <button type="button" class="cell cell-button is-danger" id="editor-del">この予定を削除</button>
+      <div data-kind-for="weekly interval">
+        <div class="field">
+          <label>曜日</label>
+          <div class="days" id="f-days"></div>
+          <div class="quick">
+            <button type="button" class="pill" data-days="0,1,2,3,4">平日</button>
+            <button type="button" class="pill" data-days="5,6">週末</button>
+            <button type="button" class="pill" data-days="0,1,2,3,4,5,6">毎日</button>
           </div>
         </div>
       </div>
+
+      <div data-kind-for="monthly yearly">
+        <div class="field">
+          <label for="f-dom">日</label>
+          <select id="f-dom" class="input-narrow"></select>
+          <p class="hint" id="dom-hint"></p>
+        </div>
+      </div>
+
+      <div data-kind-for="yearly">
+        <div class="field">
+          <label for="f-month">月</label>
+          <select id="f-month" class="input-narrow"></select>
+        </div>
+      </div>
+
+      <div data-kind-for="once">
+        <div class="field">
+          <label for="f-date">日付</label>
+          <input type="date" id="f-date" class="input-time">
+        </div>
+      </div>
+
+      <div data-kind-for="interval">
+        <div class="field">
+          <label for="f-every">何分ごと</label>
+          <select id="f-every" class="input-narrow"></select>
+        </div>
+        <div class="row row-times">
+          <label class="field field-inline"><span>開始</span><input type="time" id="f-win-start"></label>
+          <span class="row-arrow" aria-hidden="true">→</span>
+          <label class="field field-inline"><span>終了</span><input type="time" id="f-win-end"></label>
+        </div>
+      </div>
+
+      <p class="summary-line" id="f-summary"></p>
     </div>
 
-    <!-- 子画面: 繰り返し -->
-    <div class="sheet-page" id="pg-repeat">
-      <header class="sheet-nav">
-        <button type="button" class="nav-back" data-pop>
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>戻る
-        </button>
-        <h2 class="sheet-title">繰り返し</h2>
-        <span class="nav-spacer"></span>
-      </header>
-      <div class="sheet-scroll">
-        <div class="segmented" id="f-kind" role="radiogroup" aria-label="繰り返し方">
-          <button type="button" role="radio" data-kind="daily">曜日ごと</button>
-          <button type="button" role="radio" data-kind="once">1回だけ</button>
-          <button type="button" role="radio" data-kind="interval">一定間隔</button>
-        </div>
+    <h3>何を鳴らす</h3>
+    <div class="segmented" id="f-atype">
+      <button type="button" data-atype="sound" class="is-active">サウンド</button>
+      <button type="button" data-atype="speak">読み上げ</button>
+      <button type="button" data-atype="both">両方</button>
+    </div>
 
-        <div class="group-block" data-kind-for="once">
-          <div class="group">
-            <label class="cell">
-              <span class="cell-label">日付</span>
-              <input type="date" class="cell-input" id="f-date2">
-            </label>
-          </div>
-          <p class="footnote">鳴ったあとは自動でオフになります。</p>
+    <div class="panel">
+      <div data-atype-for="sound both">
+        <div class="field">
+          <label>サウンド <span class="chosen" id="f-sound-name"></span></label>
+          <div class="sound-picker" id="f-sound-picker"></div>
         </div>
-
-        <div class="group-block" data-kind-for="interval">
-          <div class="group">
-            <label class="cell">
-              <span class="cell-label">何分ごと</span>
-              <input type="number" class="cell-input cell-num" id="f-every" min="1" max="1440" inputmode="numeric">
-            </label>
-            <label class="cell">
-              <span class="cell-label">開始</span>
-              <input type="time" class="cell-input" id="f-win-start2">
-            </label>
-            <label class="cell">
-              <span class="cell-label">終了</span>
-              <input type="time" class="cell-input" id="f-win-end2">
-            </label>
-          </div>
+      </div>
+      <div data-atype-for="speak both">
+        <div class="field">
+          <label for="f-text">読み上げる文章</label>
+          <textarea id="f-text" rows="2" maxlength="500" placeholder="例）お出かけの時間です"></textarea>
         </div>
-
-        <div class="group-block" data-kind-for="daily interval">
-          <h3 class="group-head">曜日</h3>
-          <div class="quick" id="f-quick">
-            <button type="button" data-days="0,1,2,3,4">平日</button>
-            <button type="button" data-days="5,6">週末</button>
-            <button type="button" data-days="0,1,2,3,4,5,6">毎日</button>
-          </div>
-          <div class="group" id="f-days"></div>
+        <div class="field">
+          <label for="f-voice">声</label>
+          <select id="f-voice"></select>
         </div>
+      </div>
+      <div class="field">
+        <label for="f-volume">音量 <output id="f-vol-out"></output></label>
+        <div class="row">
+          <input type="range" id="f-volume" min="0" max="1.5" step="0.05">
+          <button type="button" class="btn btn-ghost" id="f-test">▶ 試聴</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="f-repeat">繰り返し</label>
+        <select id="f-repeat" class="input-narrow"></select>
       </div>
     </div>
 
-    <!-- 子画面: サウンド -->
-    <div class="sheet-page" id="pg-sound">
-      <header class="sheet-nav">
-        <button type="button" class="nav-back" data-pop>
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>戻る
-        </button>
-        <h2 class="sheet-title" id="pg-sound-title">サウンド</h2>
-        <span class="nav-spacer"></span>
-      </header>
-      <div class="sheet-scroll" id="pg-sound-list"></div>
-    </div>
-
-    <!-- 子画面: 読み上げ -->
-    <div class="sheet-page" id="pg-speak">
-      <header class="sheet-nav">
-        <button type="button" class="nav-back" data-pop>
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>戻る
-        </button>
-        <h2 class="sheet-title">読み上げ</h2>
-        <span class="nav-spacer"></span>
-      </header>
-      <div class="sheet-scroll">
-        <div class="group-block">
-          <div class="group">
-            <div class="cell">
-              <span class="cell-label" id="f-speak-label">読み上げる</span>
-              <button type="button" class="switch" id="f-speak" role="switch" aria-checked="false" aria-labelledby="f-speak-label"></button>
-            </div>
-          </div>
+    <h3>事前の予告</h3>
+    <div class="panel">
+      <p class="hint">本番の前に短い合図を鳴らします。お出かけの 10 分前などに。</p>
+      <div class="quick quick-lead" id="lead-quick"></div>
+      <div data-leads-only>
+        <div class="field">
+          <label>予告のサウンド <span class="chosen" id="f-lead-name"></span></label>
+          <div class="sound-picker sound-picker-short" id="f-lead-picker"></div>
         </div>
-        <div data-speak-only>
-          <div class="group-block">
-            <h3 class="group-head">文章</h3>
-            <div class="group">
-              <textarea id="f-text" class="cell-textarea" rows="3" maxlength="500" placeholder="例）お出かけの時間です" aria-label="読み上げる文章"></textarea>
-            </div>
-          </div>
-          <div class="group-block">
-            <h3 class="group-head">速さ</h3>
-            <div class="group">
-              <div class="cell cell-slider">
-                <input type="range" id="f-rate" min="90" max="400" step="10" aria-label="話す速さ">
-                <output class="cell-value" id="f-rate-out"></output>
-              </div>
-            </div>
-          </div>
-          <div id="f-voice-list"></div>
-        </div>
+        <label class="check">
+          <input type="checkbox" id="f-lead-speak">
+          <span>「あと○分です」と読み上げる</span>
+        </label>
+        <button type="button" class="btn btn-ghost btn-wide" id="f-lead-test">▶ 予告を試聴</button>
       </div>
     </div>
 
-    <!-- 子画面: 予告 -->
-    <div class="sheet-page" id="pg-lead">
-      <header class="sheet-nav">
-        <button type="button" class="nav-back" data-pop>
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>戻る
-        </button>
-        <h2 class="sheet-title">予告</h2>
-        <span class="nav-spacer"></span>
-      </header>
-      <div class="sheet-scroll">
-        <div class="group-block">
-          <div class="group" id="f-leads"></div>
-          <p class="footnote">いくつでも選べます（8 つまで）。深夜 0 時台の予定に 30 分前の予告を付けると、前日の 23:30 台に鳴ります。</p>
-        </div>
+    <h3>メモ</h3>
+    <div class="panel">
+      <div class="field">
+        <input type="text" id="f-note" maxlength="200" placeholder="自分用のメモ（任意）">
       </div>
     </div>
 
+    <p class="form-error" id="editor-error" hidden aria-live="polite"></p>
+
+    <div class="editor-extra" id="editor-extra" hidden>
+      <button class="btn btn-wide" id="editor-copy">この予定を複製する</button>
+      <button class="btn btn-danger btn-wide" id="editor-delete">この予定を削除</button>
+    </div>
   </div>
 </dialog>
 
-<!-- ===== 確認用アクションシート ===== -->
-<dialog id="actionsheet" class="actionsheet" aria-labelledby="as-title">
-  <div class="as-group">
-    <p class="as-title" id="as-title"></p>
-    <button type="button" class="as-btn is-danger" id="as-ok"></button>
-  </div>
-  <button type="button" class="as-btn as-cancel" id="as-cancel">キャンセル</button>
-</dialog>
-
-<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<div class="toast" id="toast" hidden role="status"></div>
+<script src="/lib.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

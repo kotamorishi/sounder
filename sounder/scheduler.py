@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import calendar
 import threading
 import time
 from datetime import date, datetime, timedelta
 
 DAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"]
+LAST_DAY = "last"
 
 # スリープ復帰などで取りこぼした通知を、何秒前までなら鳴らすか
 DEFAULT_GRACE = 120.0
@@ -21,6 +23,16 @@ def _at(day: date, minutes: int) -> datetime:
     return datetime.combine(day, datetime.min.time()) + timedelta(minutes=minutes)
 
 
+def _matches_day_of_month(want, day: date) -> bool:
+    """day_of_month（1〜31 または 'last'）がその日に当たるか。
+
+    31 日指定は 31 日がある月だけ鳴る。2 月も含めて毎月鳴らしたい場合は 'last'（月末）を使う。
+    """
+    if want == LAST_DAY:
+        return day.day == calendar.monthrange(day.year, day.month)[1]
+    return day.day == want
+
+
 def day_occurrences(sched: dict, day: date) -> list[tuple[datetime, str, int]]:
     """その日が基準日となる発火時刻を (時刻, 種別, 予告分) で返す。
 
@@ -29,8 +41,14 @@ def day_occurrences(sched: dict, day: date) -> list[tuple[datetime, str, int]]:
     kind = sched["kind"]
     mains: list[datetime] = []
 
-    if kind == "daily":
+    if kind == "weekly":
         if day.weekday() in sched["days"]:
+            mains.append(_at(day, _minutes(sched["time"])))
+    elif kind == "monthly":
+        if _matches_day_of_month(sched["day_of_month"], day):
+            mains.append(_at(day, _minutes(sched["time"])))
+    elif kind == "yearly":
+        if day.month == sched["month"] and _matches_day_of_month(sched["day_of_month"], day):
             mains.append(_at(day, _minutes(sched["time"])))
     elif kind == "once":
         if sched["date"] == day.isoformat():
@@ -70,97 +88,83 @@ def events_between(sched: dict, lo: datetime, hi: datetime) -> list[tuple[dateti
     return sorted(found)
 
 
+# 次回を探すときにどれだけ先まで見るか（種別ごと）
+HORIZONS = {"weekly": 21, "interval": 21, "once": 400, "monthly": 70, "yearly": 400}
+
+
 def next_events(schedules: list[dict], *, now: datetime | None = None,
-                limit: int = 8, horizon_days: int = 21) -> list[dict]:
-    """有効なスケジュールの次回発火予定を時刻順に返す。"""
+                limit: int = 8, per_schedule: int = 3,
+                settings: dict | None = None) -> list[dict]:
+    """有効なスケジュールの次回発火予定を時刻順に返す。
+
+    settings を渡すと、禁止時間に当たるものに quiet=True を付ける。
+    """
     now = now or datetime.now()
+    settings = settings or {}
     found: list[tuple[datetime, dict]] = []
     for s in schedules:
         if not s.get("enabled"):
             continue
         day = now.date()
-        end = day + timedelta(days=horizon_days)
+        end = day + timedelta(days=HORIZONS.get(s["kind"], 21))
         picked = 0
-        while day <= end and picked < 3:
+        while day <= end and picked < per_schedule:
             for when, tag, lead in sorted(day_occurrences(s, day)):
                 if when <= now:
                     continue
                 found.append((when, {
                     "schedule_id": s["id"], "name": s["name"], "tag": tag,
                     "lead": lead, "at": when.isoformat(timespec="seconds"),
+                    "quiet": in_quiet_hours(settings, when),
                 }))
                 picked += 1
-                if picked >= 3:
+                if picked >= per_schedule:
                     break
             day += timedelta(days=1)
     found.sort(key=lambda x: x[0])
     return [e for _w, e in found[:limit]]
 
 
-def _outcome(sched: dict, when: datetime, tag: str, lead: int,
-             log_entries: list[dict]) -> str | None:
-    """過ぎた発火がどうなったか（fired / skipped / missed）をログから探す。"""
-    label = f"{sched['name']}（{lead}分前の予告）" if tag == "lead" else sched["name"]
-    stamp = f"{when:%m/%d %H:%M}"
-    for e in log_entries:
-        level = e.get("level")
-        if level not in ("fired", "skipped", "missed") or e.get("schedule_id") != sched["id"]:
-            continue
-        msg = e.get("message") or ""
-        if not (msg.startswith(label + " を") or msg.startswith(label + ":")):
-            continue
-        if level == "missed":
-            if stamp in msg:
-                return level
-            continue
-        try:
-            ts = datetime.fromisoformat(e["ts"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        # tick は 1 秒ごとなので、ログの時刻は発火時刻の直後（猶予内）になる
-        if when - timedelta(seconds=5) <= ts <= when + timedelta(seconds=DEFAULT_GRACE + 5):
-            return level
-    return None
+def calendar_days(schedules: list[dict], start: date, days: int,
+                  *, settings: dict | None = None, now: datetime | None = None) -> list[dict]:
+    """週カレンダー用。start から days 日分、各日の発火予定を時刻順に並べて返す。
 
-
-def timeline(schedules: list[dict], day: date, *, settings: dict,
-             now: datetime | None = None, days: int = 1,
-             log_entries: list[dict] | None = None) -> list[dict]:
-    """day から days 日分の全発火（過ぎたもの・無効な予定・予告を含む）を時刻順に返す。
-
-    発火判定は day_occurrences（= tick / next_events と同じもの）を使う。
-    各要素は next_events と同じキーに、鳴るかどうかの状態を足したもの。
+    無効なスケジュールも enabled=False として含める（画面で薄く見せるため）。
+    禁止時間に当たる予定には quiet=True を付ける。
     """
     now = now or datetime.now()
-    last = day + timedelta(days=max(1, days) - 1)
-    master = bool(settings.get("master_enabled", True))
-    out: list[tuple[datetime, int, dict]] = []
-    for s in schedules:
-        # 予告は前日にまたがるので、翌日が基準日の分も見る
-        d = day
-        while d <= last + timedelta(days=1):
-            for when, tag, lead in day_occurrences(s, d):
-                if not (day <= when.date() <= last):
-                    continue
-                main_at = when + timedelta(minutes=lead) if tag == "lead" else when
-                enabled = bool(s.get("enabled"))
-                quiet = in_quiet_hours(settings, when)
-                past = when <= now
-                out.append((when, 0 if tag == "lead" else 1, {
-                    "schedule_id": s["id"], "name": s["name"], "tag": tag, "lead": lead,
+    settings = settings or {}
+    out = []
+    for i in range(days):
+        day = start + timedelta(days=i)
+        events = []
+        for s in schedules:
+            for when, tag, lead in day_occurrences(s, day):
+                events.append({
+                    "schedule_id": s["id"],
+                    "name": s["name"],
                     "at": when.isoformat(timespec="seconds"),
-                    "main_at": main_at.isoformat(timespec="seconds"),
+                    "time": when.strftime("%H:%M"),
+                    "tag": tag,
+                    "lead": lead,
+                    "enabled": bool(s.get("enabled")),
                     "kind": s["kind"],
-                    "enabled": enabled,
-                    "master": master,
-                    "quiet": quiet,
-                    "past": past,
-                    "will_ring": (not past) and enabled and master and not quiet,
-                    "result": _outcome(s, when, tag, lead, log_entries or []) if past else None,
-                }))
-            d += timedelta(days=1)
-    out.sort(key=lambda x: (x[0], x[1], x[2]["name"]))
-    return [e for _w, _o, e in out]
+                    "action_type": "sound" if tag == "lead" else s["action"]["type"],
+                    "sound": ((s.get("lead_action") or {}) if tag == "lead"
+                              else s["action"]).get("sound"),
+                    "quiet": in_quiet_hours(settings, when),
+                    "past": when <= now,
+                })
+        events.sort(key=lambda e: e["at"])
+        out.append({
+            "date": day.isoformat(),
+            "weekday": day.weekday(),
+            "day": day.day,
+            "month": day.month,
+            "is_today": day == now.date(),
+            "events": events,
+        })
+    return out
 
 
 def in_quiet_hours(settings: dict, when: datetime) -> bool:
@@ -179,25 +183,36 @@ def in_quiet_hours(settings: dict, when: datetime) -> bool:
 def describe(sched: dict) -> str:
     """UI とログ用の 1 行説明。"""
     kind = sched["kind"]
-    if kind == "daily":
-        days = sched["days"]
-        if days == [0, 1, 2, 3, 4, 5, 6]:
-            when = "毎日"
-        elif days == [0, 1, 2, 3, 4]:
-            when = "平日"
-        elif days == [5, 6]:
-            when = "週末"
-        else:
-            when = "".join(DAY_LABELS[d] for d in days) + "曜"
-        base = f"{when} {sched['time']}"
+    if kind == "weekly":
+        base = f"{describe_days(sched['days'])} {sched['time']}"
+    elif kind == "monthly":
+        base = f"{describe_day_of_month(sched['day_of_month'])} {sched['time']}"
+    elif kind == "yearly":
+        base = f"毎年{sched['month']}月{describe_day_of_month(sched['day_of_month'], bare=True)} {sched['time']}"
     elif kind == "once":
         base = f"{sched['date']} {sched['time']}"
     else:
         w = sched["window"]
-        base = f"{w['start']}〜{w['end']} の {sched['every_minutes']}分ごと"
+        base = f"{describe_days(sched['days'])} {w['start']}〜{w['end']} の {sched['every_minutes']}分ごと"
     if sched.get("lead_times"):
         base += "（" + "・".join(f"{m}分前" for m in sched["lead_times"]) + "に予告）"
     return base
+
+
+def describe_days(days: list[int]) -> str:
+    if days == [0, 1, 2, 3, 4, 5, 6]:
+        return "毎日"
+    if days == [0, 1, 2, 3, 4]:
+        return "平日"
+    if days == [5, 6]:
+        return "週末"
+    return "".join(DAY_LABELS[d] for d in days) + "曜"
+
+
+def describe_day_of_month(day, *, bare: bool = False) -> str:
+    if day == LAST_DAY:
+        return "月末" if bare else "毎月末"
+    return f"{day}日" if bare else f"毎月{day}日"
 
 
 class Scheduler:
@@ -248,8 +263,7 @@ class Scheduler:
         if len(self._fired) > 4000:
             self._fired = set(list(self._fired)[-1000:])
 
-    def _fire(self, sched: dict, when: datetime, tag: str, lead: int,
-              now: datetime, settings: dict) -> None:
+    def _fire(self, sched: dict, when: datetime, tag: str, lead: int, now, settings) -> None:
         name = sched["name"]
         label = f"{name}（{lead}分前の予告）" if tag == "lead" else name
         behind = (now - when).total_seconds()
@@ -262,13 +276,13 @@ class Scheduler:
             self.log("skipped", f"{label}: 全体がオフのためスキップしました", schedule_id=sched["id"])
             return
         if in_quiet_hours(settings, when):
-            self.log("skipped", f"{label}: 静音時間帯のためスキップしました", schedule_id=sched["id"])
+            self.log("skipped", f"{label}: 禁止時間のためスキップしました", schedule_id=sched["id"])
             return
 
-        action = self._action_for(sched, tag, lead, settings)
+        action = self.action_for(sched, tag, lead, settings)
         self.log("fired", f"{label} を再生しました", schedule_id=sched["id"])
         self.store.mark_fired(sched["id"], when)
-        self.player.play(action, settings=settings, label=label)
+        self.player.play(action, settings=settings, label=label, queue=True)
 
         if sched["kind"] == "once" and tag == "main":
             try:
@@ -277,7 +291,7 @@ class Scheduler:
             except KeyError:
                 pass
 
-    def _action_for(self, sched: dict, tag: str, lead: int, settings: dict) -> dict:
+    def action_for(self, sched: dict, tag: str, lead: int, settings: dict) -> dict:
         if tag == "main":
             return sched["action"]
         la = dict(sched.get("lead_action") or {"type": "sound", "sound": "builtin:melody_notice"})

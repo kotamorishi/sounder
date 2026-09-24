@@ -1,0 +1,23 @@
+<!doctype html><meta charset="utf-8"><title>frame</title>
+<body style="margin:0;background:#8a8a8a;display:grid;place-items:start center">
+<iframe id="f" style="border:0;background:#fff" title="preview"></iframe>
+<script>
+  var q = new URLSearchParams(location.search);
+  var f = document.getElementById('f');
+  f.width = q.get('w') || 390;
+  f.height = q.get('h') || 844;
+  f.src = q.get('u') || '/';
+  var click = q.get('click');
+  if (click) {
+    f.addEventListener('load', function () {
+      setTimeout(function () {
+        click.split('|').forEach(function (sel, i) {
+          setTimeout(function () {
+            var n = f.contentWindow.document.querySelector(sel);
+            if (n) n.click();
+          }, i * 400);
+        });
+      }, Number(q.get('delay') || 900));
+    });
+  }
+</script>

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import re
+from collections import deque
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -40,6 +42,9 @@ class Player:
         self._lock = threading.Lock()
         self._proc: subprocess.Popen | None = None
         self._job = 0
+        # 同じ時刻に複数の予定が来ても打ち消し合わないよう、順番待ちに並べる
+        self._queue: deque[tuple[dict, dict, str]] = deque()
+        self._draining = False
         self._tmpdir = Path(tempfile.mkdtemp(prefix="sounder-say-"))
         self.afplay = shutil.which("afplay")
         self.say = shutil.which("say")
@@ -119,26 +124,50 @@ class Player:
                                  text=True, timeout=15).stdout
         except (OSError, subprocess.SubprocessError):
             return []
-        voices = []
+        voices, seen = [], set()
         for line in out.splitlines():
-            m = re.match(r"^(.+?)\s{2,}([a-z]{2}[_-][A-Z]{2})\s", line)
-            if m:
-                voices.append({"name": m.group(1).strip(), "locale": m.group(2)})
+            # 例: "Kyoko (Japanese (Japan)) ja_JP    # こんにちは"
+            # 名前に空白が入るものがあるので、ロケールと # を手がかりに切り出す
+            m = re.match(r"^(.*?)\s+([a-z]{2,3}(?:[_-][A-Za-z]{2,4})?)\s*#", line)
+            if not m:
+                continue
+            name = m.group(1).strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            voices.append({"name": name, "locale": m.group(2)})
         voices.sort(key=lambda v: (not v["locale"].startswith("ja"), v["name"].lower()))
         return voices
 
     # --- 再生 -------------------------------------------------------------
 
+    def _signal_group(self, proc: subprocess.Popen, sig: int) -> None:
+        """プロセスグループごと止める。afplay が子を持つ場合も取り残さない。"""
+        try:
+            os.killpg(os.getpgid(proc.pid), sig)
+        except OSError:
+            try:
+                proc.send_signal(sig)
+            except OSError:
+                pass
+
     def stop(self) -> None:
+        """鳴っている音を止め、順番待ちも捨てる（画面の停止ボタン）。"""
+        with self._lock:
+            self._queue.clear()
+        self._stop_current()
+
+    def _stop_current(self) -> None:
+        """いま鳴っているものだけを止める（順番待ちはそのまま）。"""
         with self._lock:
             self._job += 1
             proc, self._proc = self._proc, None
         if proc and proc.poll() is None:
-            proc.terminate()
+            self._signal_group(proc, signal.SIGTERM)
             try:
                 proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                self._signal_group(proc, signal.SIGKILL)
 
     def is_playing(self) -> bool:
         with self._lock:
@@ -153,14 +182,18 @@ class Player:
             self._log("error", f"再生に失敗しました: {exc}")
             return False
         with self._lock:
-            if job != self._job:
-                proc.terminate()
-                return False
-            self._proc = proc
+            stale = job != self._job
+            if not stale:
+                self._proc = proc
+        if stale:  # 待っている間に別の再生が始まっていた
+            self._signal_group(proc, signal.SIGTERM)
+            proc.communicate()
+            return False
         try:
             _out, err = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            self._signal_group(proc, signal.SIGKILL)
+            proc.communicate()  # 後始末（パイプを閉じてゾンビを残さない）
             self._log("error", "再生が長すぎるため停止しました")
             return False
         finally:
@@ -194,17 +227,41 @@ class Player:
             return None
         return out
 
-    def play(self, action: dict, *, settings: dict, label: str = "") -> None:
-        """action を非同期で再生する（呼び出し側はブロックしない）。"""
-        threading.Thread(target=self.play_blocking, args=(action,),
-                         kwargs={"settings": settings, "label": label},
-                         daemon=True).start()
+    def play(self, action: dict, *, settings: dict, label: str = "",
+             queue: bool = False) -> None:
+        """action を非同期で再生する（呼び出し側はブロックしない）。
+
+        queue=True なら、鳴っているものの後ろに並べる（時刻が重なった予定用）。
+        queue=False なら、鳴っているものを止めて今すぐ鳴らす（試聴用）。
+        """
+        if not queue:
+            with self._lock:
+                self._queue.clear()
+            self._stop_current()
+        with self._lock:
+            self._queue.append((action, settings, label))
+            if self._draining:
+                return
+            self._draining = True
+        threading.Thread(target=self._drain, name="player", daemon=True).start()
+
+    def _drain(self) -> None:
+        while True:
+            with self._lock:
+                if not self._queue:
+                    self._draining = False
+                    return
+                action, settings, label = self._queue.popleft()
+            try:
+                self.play_blocking(action, settings=settings, label=label)
+            except Exception as exc:  # 1 件の失敗で順番待ちを止めない
+                self._log("error", f"再生中にエラーが発生しました: {exc!r}")
 
     def play_blocking(self, action: dict, *, settings: dict, label: str = "") -> None:
         if not self.afplay:
             self._log("error", "afplay が見つかりません（macOS 以外では動きません）")
             return
-        self.stop()
+        self._stop_current()
         with self._lock:
             self._job += 1
             job = self._job

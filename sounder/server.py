@@ -27,14 +27,11 @@ from .eventlog import EventLog
 from .player import Player, SoundNotFound
 from .scheduler import Scheduler
 
-MAX_BODY = 40 * 1024 * 1024  # アップロードを含むので少し大きめ
+MAX_UPLOAD_BYTES = 30 * 1024 * 1024   # 1 ファイルの上限
+MAX_BODY = MAX_UPLOAD_BYTES * 4 // 3 + 1024 * 1024  # base64 化した分の余裕を見る
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
-# 同梱フォントは中身が変わらないので長くキャッシュさせる（それ以外は no-store）
-FONT_CACHE = "public, max-age=31536000, immutable"
-
-# 環境によっては Web フォントの型が mimetypes に登録されていない
-for _ext, _type in ((".woff2", "font/woff2"), (".woff", "font/woff"), (".ttf", "font/ttf")):
-    mimetypes.add_type(_type, _ext)
+# mimetypes が知らない拡張子を補う
+EXTRA_TYPES = {".webmanifest": "application/manifest+json"}
 
 
 class App:
@@ -55,6 +52,17 @@ class App:
         self.scheduler = Scheduler(self.store, self.player, self.log)
         self.token = token
         self.started_at = datetime.now()
+        self._pick_default_voice()
+
+    def _pick_default_voice(self) -> None:
+        """読み上げの声が未設定なら、日本語の声を選んでおく。"""
+        if self.store.settings.get("default_voice"):
+            return
+        ja = [v["name"] for v in self.player.voices() if v["locale"].startswith("ja")]
+        if not ja:
+            return
+        kyoko = [n for n in ja if n.startswith("Kyoko")]
+        self.store.update_settings({"default_voice": (kyoko or ja)[0]})
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -67,12 +75,11 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args) -> None:  # アクセスログは静かに
         pass
 
-    def _send(self, code: int, body: bytes, ctype: str, extra: dict | None = None,
-              cache: str = "no-store") -> None:
+    def _send(self, code: int, body: bytes, ctype: str, extra: dict | None = None) -> None:
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", cache)
+        self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
@@ -163,7 +170,10 @@ class Handler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
         try:
             if not self._authorized(query):
-                self._error(HTTPStatus.UNAUTHORIZED, "トークンが必要です")
+                if path.startswith("/api/") or method != "GET":
+                    self._error(HTTPStatus.UNAUTHORIZED, "合言葉が必要です")
+                else:
+                    self._unlock_page()   # 画面を開こうとした人には入力欄を出す
                 return
             if method != "GET" and not self._same_origin():
                 self._error(HTTPStatus.FORBIDDEN, "リクエスト元が不正です")
@@ -186,6 +196,14 @@ class Handler(BaseHTTPRequestHandler):
             self.app.log("error", f"{method} {path} で例外: {exc!r}")
             self._error(HTTPStatus.INTERNAL_SERVER_ERROR, f"サーバ内部エラー: {exc}")
 
+    def _unlock_page(self) -> None:
+        """合言葉が無いときに出す小さな入力画面。"""
+        page = self.app.web_dir / "unlock.html"
+        if not page.is_file():
+            self._error(HTTPStatus.UNAUTHORIZED, "合言葉が必要です")
+            return
+        self._send(HTTPStatus.UNAUTHORIZED, page.read_bytes(), "text/html; charset=utf-8")
+
     # --- 静的ファイル -----------------------------------------------------
 
     def _static(self, path: str, query: dict) -> None:
@@ -198,7 +216,9 @@ class Handler(BaseHTTPRequestHandler):
         if not target.is_file():
             self._error(HTTPStatus.NOT_FOUND, "ページがありません")
             return
-        ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        ctype = (EXTRA_TYPES.get(target.suffix)
+                 or mimetypes.guess_type(target.name)[0]
+                 or "application/octet-stream")
         if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
             ctype += "; charset=utf-8"
         extra = {}
@@ -206,8 +226,7 @@ class Handler(BaseHTTPRequestHandler):
         tok = (query.get("t") or [None])[0]
         if tok and self.app.token and secrets.compare_digest(tok, self.app.token):
             extra["Set-Cookie"] = f"sounder_token={tok}; Path=/; SameSite=Strict; Max-Age=31536000"
-        cache = FONT_CACHE if target.parent == web / "fonts" else "no-store"
-        self._send(HTTPStatus.OK, target.read_bytes(), ctype, extra, cache=cache)
+        self._send(HTTPStatus.OK, target.read_bytes(), ctype, extra)
 
     # --- API --------------------------------------------------------------
 
@@ -223,34 +242,23 @@ class Handler(BaseHTTPRequestHandler):
             self._json({
                 "now": datetime.now().isoformat(timespec="seconds"),
                 "playing": app.player.is_playing(),
-                "next_events": sched_mod.next_events(app.store.schedules(), limit=6),
+                "next_events": sched_mod.next_events(
+                    app.store.schedules(), limit=6, settings=app.store.settings),
                 "log": app.log.recent(25),
             })
             return
 
-        if parts == ["timeline"] and method == "GET":
-            raw = (query.get("date") or [""])[0]
+        if parts == ["calendar"] and method == "GET":
+            start = (query.get("start") or [""])[0]
             try:
-                day = date.fromisoformat(raw) if raw else date.today()
+                first = date.fromisoformat(start) if start else date.today()
             except ValueError:
-                raise ValidationError("date は YYYY-MM-DD 形式で指定してください")
-            try:
-                days = int((query.get("days") or [1])[0])
-            except ValueError:
-                raise ValidationError("days は整数で指定してください")
-            if not 1 <= days <= 14:
-                raise ValidationError("days は 1〜14 で指定してください")
-            now = datetime.now()
-            settings = app.store.settings
+                raise ValidationError("start は YYYY-MM-DD 形式で指定してください")
+            span = min(31, max(1, int((query.get("days") or [7])[0] or 7)))
             self._json({
-                "date": day.isoformat(),
-                "days": days,
-                "now": now.isoformat(timespec="seconds"),
-                "master_enabled": settings.get("master_enabled", True),
-                "quiet_hours": settings.get("quiet_hours"),
-                "events": sched_mod.timeline(app.store.schedules(), day, settings=settings,
-                                             now=now, days=days,
-                                             log_entries=app.log.recent(300)),
+                "start": first.isoformat(),
+                "days": sched_mod.calendar_days(
+                    app.store.schedules(), first, span, settings=app.store.settings),
             })
             return
 
@@ -300,7 +308,7 @@ class Handler(BaseHTTPRequestHandler):
                 which = (self._json_body().get("which") or "main")
                 if which == "lead" and s.get("lead_action"):
                     lead = (s.get("lead_times") or [5])[0]
-                    action = app.scheduler._action_for(s, "lead", lead, app.store.settings)
+                    action = app.scheduler.action_for(s, "lead", lead, app.store.settings)
                 else:
                     action = s["action"]
                 app.player.play(action, settings=app.store.settings, label=f"試聴:{s['name']}")
@@ -347,8 +355,9 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValidationError("ファイルの内容を読めませんでした")
                 if not data:
                     raise ValidationError("ファイルが空です")
-                if len(data) > 30 * 1024 * 1024:
-                    raise ValidationError("30MB 以下のファイルにしてください")
+                if len(data) > MAX_UPLOAD_BYTES:
+                    raise ValidationError(
+                        f"{MAX_UPLOAD_BYTES // (1024 * 1024)}MB 以下のファイルにしてください")
                 info = app.player.save_upload(name, data)
                 app.log("info", f"サウンド {info['label']} を追加しました")
                 self._json({"sound": info, "sounds": app.player.library()},
@@ -382,7 +391,8 @@ class Handler(BaseHTTPRequestHandler):
             "schedules": self._decorate(app.store.schedules()),
             "sounds": app.player.library(),
             "voices": app.player.voices(),
-            "next_events": sched_mod.next_events(app.store.schedules(), limit=6),
+            "next_events": sched_mod.next_events(
+                app.store.schedules(), limit=6, settings=app.store.settings),
             "log": app.log.recent(30),
             "playing": app.player.is_playing(),
             "host": f"{self.headers.get('Host')}",
@@ -391,9 +401,8 @@ class Handler(BaseHTTPRequestHandler):
         }
 
 
-def serve(home: Path, host: str, port: int, token: str | None) -> int:
-    app = App(home, token)
-    Handler.app = app
+def make_server(app: App, host: str, port: int) -> ThreadingHTTPServer:
+    """app に紐付いた HTTP サーバを作る（テストからも使う）。"""
 
     class Server(ThreadingHTTPServer):
         daemon_threads = True
@@ -407,8 +416,15 @@ def serve(home: Path, host: str, port: int, token: str | None) -> int:
             self.server_name = self.server_address[0]
             self.server_port = self.server_address[1]
 
+    # ハンドラごとに app を束ねる（1 プロセスで複数立てられるようにする）
+    bound = type("BoundHandler", (Handler,), {"app": app})
+    return Server((host, port), bound)
+
+
+def serve(home: Path, host: str, port: int, token: str | None) -> int:
+    app = App(home, token)
     try:
-        httpd = Server((host, port), Handler)
+        httpd = make_server(app, host, port)
     except OSError as exc:
         print(f"[sounder] {host}:{port} を開けませんでした: {exc}", file=sys.stderr)
         return 1
@@ -423,10 +439,7 @@ def serve(home: Path, host: str, port: int, token: str | None) -> int:
         print("[sounder] 警告: ローカル以外に公開しています。--token の利用を検討してください。",
               file=sys.stderr)
 
-    stop = threading.Event()
-
     def shutdown(_sig=None, _frm=None):
-        stop.set()
         threading.Thread(target=httpd.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGINT, shutdown)
