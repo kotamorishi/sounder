@@ -126,7 +126,23 @@ function renderWeek() {
   });
 }
 
+function renderStartHere() {
+  var box = $('#start-here');
+  box.hidden = state.schedules.length > 0;
+  if (box.hidden) return;
+  var grid = $('#start-grid');
+  grid.innerHTML = '';
+  PRESETS.slice(0, 4).forEach(function (p) {
+    var b = el('button', 'preset');
+    b.type = 'button';
+    b.append(el('b', null, p.title), el('span', null, p.desc));
+    b.addEventListener('click', function () { openEditor(p.make(), { asNew: true }); });
+    grid.append(b);
+  });
+}
+
 function renderToday() {
+  $('#today-wrap').hidden = state.schedules.length === 0;
   var box = $('#today-list');
   box.innerHTML = '';
   var todayISO = SL.isoDate(new Date());
@@ -155,7 +171,7 @@ function renderHero() {
   var next = state.next_events[0];
   var hero = $('#hero');
   if (!next) {
-    $('#hero-when').textContent = '—';
+    $('#hero-when').hidden = true;
     $('#hero-name').textContent = state.schedules.length
       ? '予定はありません（すべてオフかもしれません）' : 'まだ予定がありません';
     $('#hero-count').textContent = '';
@@ -163,6 +179,7 @@ function renderHero() {
     hero.classList.remove('is-quiet');
     return;
   }
+  $('#hero-when').hidden = false;
   $('#hero-when').textContent = SL.fmtWhen(next.at);
   $('#hero-name').textContent = next.name
     + (next.tag === 'lead' ? '（' + next.lead + '分前の予告）' : '');
@@ -233,6 +250,11 @@ function renderList() {
   box.innerHTML = '';
   var items = state.schedules.filter(function (s) {
     return filter === 'all' || (filter === 'on' ? s.enabled : !s.enabled);
+  }).sort(function (a, b) {
+    // 次に鳴る順。オフのものは後ろにまとめる
+    if (!!a.enabled !== !!b.enabled) return a.enabled ? -1 : 1;
+    if (!a.next_at || !b.next_at) return a.next_at ? -1 : (b.next_at ? 1 : 0);
+    return a.next_at < b.next_at ? -1 : (a.next_at > b.next_at ? 1 : 0);
   });
   $('#sched-count').textContent = state.schedules.length ? '(' + state.schedules.length + ')' : '';
   $('#sched-empty').hidden = state.schedules.length > 0;
@@ -513,7 +535,7 @@ function openEditor(sched, opts) {
   }
   editingId = opts.asNew || !sched ? null : sched.id;
   $('#editor-title').textContent = editingId ? '予定を編集' : '新しい予定';
-  $('#editor-delete').hidden = !editingId;
+  $('#editor-extra').hidden = !editingId;
   $('#editor-error').hidden = true;
 
   $('#f-name').value = draft.name;
@@ -715,6 +737,16 @@ async function save() {
   }
 }
 
+function copyCurrent() {
+  syncEditor();
+  var copy = JSON.parse(JSON.stringify(draft));
+  copy.id = null;
+  copy.last_fired = null;
+  copy.name = (draft.name || '予定') + ' のコピー';
+  $('#editor').close();
+  openEditor(copy, { asNew: true });
+}
+
 async function removeCurrent() {
   if (!editingId) return;
   if (!confirm('「' + draft.name + '」を削除しますか？')) return;
@@ -817,6 +849,7 @@ async function refresh() {
     var data = await api('GET', '/api/state');
     Object.assign(state, data);
     renderHero();
+    renderStartHere();
     renderList();
     renderSounds();
     renderSettings();
@@ -877,6 +910,7 @@ function wire() {
 
   $('#fab').addEventListener('click', function () { openEditor(null); });
   $('#new-btn').addEventListener('click', function () { openEditor(null); });
+  $('#start-blank').addEventListener('click', function () { openEditor(null); });
   $('#day-add').addEventListener('click', function () {
     var iso = daySheetDate;
     $('#day-sheet').close();
@@ -887,6 +921,7 @@ function wire() {
   $('#editor-cancel').addEventListener('click', function () { $('#editor').close(); });
   $('#editor-save').addEventListener('click', save);
   $('#editor-delete').addEventListener('click', removeCurrent);
+  $('#editor-copy').addEventListener('click', copyCurrent);
 
   $$('#f-kind button').forEach(function (b) {
     b.addEventListener('click', function () {

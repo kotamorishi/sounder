@@ -48,6 +48,8 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* display を持つ要素でも hidden 属性を効かせる */
+[hidden] { display: none !important; }
 
 body {
   margin: 0; overflow-x: hidden;
@@ -135,6 +137,16 @@ main {
 .hero.is-quiet .hero-when { color: var(--ink-3); text-decoration: line-through; }
 
 /* ---------------- 週の切り替え ---------------- */
+.start-here {
+  margin-top: 14px; background: var(--surface); border: 1px dashed var(--line);
+  border-radius: var(--r); padding: 14px; display: grid; gap: 10px;
+}
+.start-here p { margin: 0; font-size: 13.5px; color: var(--ink-2); }
+.start-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; }
+@media (min-width: 720px) {
+  .start-grid { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+}
+
 .weeknav { display: flex; align-items: center; gap: 6px; margin: 18px 0 8px; }
 .weeknav-label {
   flex: 1; appearance: none; border: 1px solid var(--line); background: var(--surface);
@@ -459,6 +471,8 @@ dialog.sheet-full { top: 0; border-radius: 0; height: 100%; }
 .meta { display: grid; grid-template-columns: max-content 1fr; gap: 5px 14px; font-size: 13px; margin: 0; }
 .meta dt { color: var(--ink-2); }
 .meta dd { margin: 0; word-break: break-all; }
+
+.editor-extra { display: grid; gap: 8px; margin-top: 18px; }
 
 .form-error {
   color: var(--err); font-size: 13.5px; margin: 8px 0 0;

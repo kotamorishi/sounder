@@ -190,7 +190,7 @@ class TestCalendarDays(unittest.TestCase):
         first = days[0]["events"]
         self.assertEqual([e["time"] for e in first], ["06:50", "07:00"])
         self.assertTrue(first[0]["past"])      # 06:50 は 06:58 より前
-        self.assertTrue(first[0]["quiet"])     # 静音時間帯に入っている
+        self.assertTrue(first[0]["quiet"])     # 禁止時間に入っている
         self.assertFalse(first[1]["past"])
         self.assertEqual(first[0]["tag"], "lead")
         self.assertEqual(first[0]["lead"], 10)

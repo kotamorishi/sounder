@@ -363,7 +363,7 @@ class TestSettings(ServerCase):
         self.assertEqual(self.ok("PATCH", "/api/settings", {"master_enabled": True})
                          ["settings"]["master_enabled"], True)
         self.assertIn("音量", self.err("PUT", "/api/settings", {"default_volume": 9})["error"])
-        self.assertIn("静音開始", self.err("PUT", "/api/settings",
+        self.assertIn("禁止時間の開始", self.err("PUT", "/api/settings",
                                        {"quiet_hours": {"start": "99:99"}})["error"])
 
     def test_settings_survive_a_restart(self):

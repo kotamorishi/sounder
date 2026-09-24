@@ -124,7 +124,7 @@ def calendar_days(schedules: list[dict], start: date, days: int,
     """週カレンダー用。start から days 日分、各日の発火予定を時刻順に並べて返す。
 
     無効なスケジュールも enabled=False として含める（画面で薄く見せるため）。
-    静音時間帯に当たる予定には quiet=True を付ける。
+    禁止時間に当たる予定には quiet=True を付ける。
     """
     now = now or datetime.now()
     settings = settings or {}
@@ -270,7 +270,7 @@ class Scheduler:
             self.log("skipped", f"{label}: 全体がオフのためスキップしました", schedule_id=sched["id"])
             return
         if in_quiet_hours(settings, when):
-            self.log("skipped", f"{label}: 静音時間帯のためスキップしました", schedule_id=sched["id"])
+            self.log("skipped", f"{label}: 禁止時間のためスキップしました", schedule_id=sched["id"])
             return
 
         action = self._action_for(sched, tag, lead, settings)

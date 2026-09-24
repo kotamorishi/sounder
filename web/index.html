@@ -49,6 +49,12 @@
       </div>
     </div>
 
+    <div class="start-here" id="start-here" hidden>
+      <p>まだ予定がありません。よく使う型から選ぶとすぐ作れます。</p>
+      <div class="start-grid" id="start-grid"></div>
+      <button class="btn btn-ghost btn-wide" id="start-blank">自分で作る</button>
+    </div>
+
     <div class="weeknav">
       <button class="icon-btn" id="week-prev" aria-label="前の週">‹</button>
       <button class="weeknav-label" id="week-label">—</button>
@@ -57,8 +63,10 @@
 
     <div class="week" id="week" role="grid"></div>
 
-    <h2 id="today-head">今日これから鳴るもの</h2>
-    <div class="today-list" id="today-list"></div>
+    <div id="today-wrap">
+      <h2 id="today-head">今日これから鳴るもの</h2>
+      <div class="today-list" id="today-list"></div>
+    </div>
 
     <p class="legend">
       <span class="legend-item"><i class="dot dot-main"></i>予定</span>
@@ -320,7 +328,10 @@
 
     <p class="form-error" id="editor-error" hidden aria-live="polite"></p>
 
-    <button class="btn btn-danger btn-wide" id="editor-delete" hidden>この予定を削除</button>
+    <div class="editor-extra" id="editor-extra" hidden>
+      <button class="btn btn-wide" id="editor-copy">この予定を複製する</button>
+      <button class="btn btn-danger btn-wide" id="editor-delete">この予定を削除</button>
+    </div>
   </div>
 </dialog>
 

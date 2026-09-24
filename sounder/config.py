@@ -23,7 +23,7 @@ ACTION_TYPES = ("sound", "speak", "both")
 DEFAULT_SETTINGS: dict[str, Any] = {
     "default_volume": 0.6,
     "master_enabled": True,
-    # 静音時間帯：この範囲に入る通知はスキップする（深夜の誤作動対策）
+    # 禁止時間：この範囲に入る通知はスキップする（深夜の誤作動対策）
     "quiet_hours": {"enabled": False, "start": "23:00", "end": "07:00"},
     "default_voice": "",
     "speak_rate": 180,
@@ -202,8 +202,8 @@ def validate_settings(raw: Any, current: dict[str, Any]) -> dict[str, Any]:
         q = raw["quiet_hours"] or {}
         out["quiet_hours"] = {
             "enabled": bool(q.get("enabled", False)),
-            "start": _time(q.get("start", current["quiet_hours"]["start"]), "静音開始"),
-            "end": _time(q.get("end", current["quiet_hours"]["end"]), "静音終了"),
+            "start": _time(q.get("start", current["quiet_hours"]["start"]), "禁止時間の開始"),
+            "end": _time(q.get("end", current["quiet_hours"]["end"]), "禁止時間の終了"),
         }
     return out
 
