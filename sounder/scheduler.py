@@ -125,15 +125,47 @@ def next_events(schedules: list[dict], *, now: datetime | None = None,
     return [e for _w, e in found[:limit]]
 
 
+def outcome(sched: dict, when: datetime, tag: str, lead: int,
+            log_entries: list[dict]) -> str | None:
+    """過ぎた発火がどうなったか（fired / skipped / missed）を実行ログから探す。
+
+    Scheduler._fire が残すログ（予定 id・名前・時刻）と突き合わせる。見つからなければ None。
+    """
+    label = f"{sched['name']}（{lead}分前の予告）" if tag == "lead" else sched["name"]
+    stamp = f"{when:%m/%d %H:%M}"
+    for e in log_entries:
+        level = e.get("level")
+        if level not in ("fired", "skipped", "missed") or e.get("schedule_id") != sched["id"]:
+            continue
+        msg = e.get("message") or ""
+        if not (msg.startswith(label + " を") or msg.startswith(label + ":")):
+            continue
+        if level == "missed":
+            if stamp in msg:
+                return level
+            continue
+        try:
+            ts = datetime.fromisoformat(e["ts"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        # tick は 1 秒ごとなので、ログの時刻は発火時刻の直後（猶予内）になる
+        if when - timedelta(seconds=5) <= ts <= when + timedelta(seconds=DEFAULT_GRACE + 5):
+            return level
+    return None
+
+
 def calendar_days(schedules: list[dict], start: date, days: int,
-                  *, settings: dict | None = None, now: datetime | None = None) -> list[dict]:
-    """週カレンダー用。start から days 日分、各日の発火予定を時刻順に並べて返す。
+                  *, settings: dict | None = None, now: datetime | None = None,
+                  log_entries: list[dict] | None = None) -> list[dict]:
+    """週カレンダー・タイムライン用。start から days 日分、各日の発火予定を時刻順に並べて返す。
 
     無効なスケジュールも enabled=False として含める（画面で薄く見せるため）。
-    禁止時間に当たる予定には quiet=True を付ける。
+    禁止時間に当たる予定には quiet=True を付ける。過ぎた予定には、実行ログ（log_entries）から
+    分かった結果を result（fired / skipped / missed / None）として付ける。
     """
     now = now or datetime.now()
     settings = settings or {}
+    log_entries = log_entries or []
     out = []
     for i in range(days):
         day = start + timedelta(days=i)
@@ -154,6 +186,7 @@ def calendar_days(schedules: list[dict], start: date, days: int,
                               else s["action"]).get("sound"),
                     "quiet": in_quiet_hours(settings, when),
                     "past": when <= now,
+                    "result": outcome(s, when, tag, lead, log_entries) if when <= now else None,
                 })
         events.sort(key=lambda e: e["at"])
         out.append({

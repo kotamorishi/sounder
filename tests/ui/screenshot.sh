@@ -10,7 +10,7 @@ OUT="${1:-/tmp/sounder-shots}"
 PORT="${2:-8799}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+CHROME="${CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 
 [ -x "$CHROME" ] || { echo "Google Chrome が見つかりません" >&2; exit 1; }
 curl -sf -m 3 "http://127.0.0.1:$PORT/api/now" >/dev/null 2>&1 || {
@@ -43,11 +43,12 @@ shot() { # 名前 幅 高さ ページ [クリックするセレクタ]
 }
 
 echo "撮影先: $OUT"
-shot phone-week     390 900  "/"
-shot phone-list     390 900  "/#list"
-shot phone-sounds   390 900  "/#sounds"
-shot phone-settings 390 900  "/#settings"
-shot phone-editor   390 1100 "/" "#fab"
-shot phone-day      390 900  "/" "#week .wday:nth-child(4)"
-shot desk-week      1100 900 "/"
-shot desk-list      1100 900 "/#list"
+shot phone-schedules 390 900  "/"
+shot phone-timeline  390 900  "/#timeline"
+shot phone-sounds    390 900  "/#sounds"
+shot phone-settings  390 900  "/#settings"
+shot phone-editor    390 900  "/" ".alarm-main"
+shot phone-repeat    390 900  "/" ".alarm-main|[data-push=pg-repeat]"
+shot phone-new       390 900  "/" "#new-btn"
+shot desk-schedules  1100 900 "/"
+shot desk-timeline   1100 900 "/#timeline"

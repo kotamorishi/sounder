@@ -150,6 +150,179 @@
     return '';
   }
 
+  // ---------------------------------------------------------------- B案の画面で使う言い換え
+
+  /** 予定一覧の区分（この順に並べる） */
+  var SECTIONS = [['毎週', 'weekly'], ['毎月', 'monthly'], ['毎年', 'yearly'],
+    ['一定間隔', 'interval'], ['1回だけ', 'once']];
+
+  /** '08:05' -> '8:05' */
+  function shortHM(hhmm) { return String(hhmm || '').replace(/^0(\d)/, '$1'); }
+
+  function toMin(hhmm) {
+    var m = String(hhmm || '').match(/^(\d{1,2}):(\d{2})/);
+    return m ? +m[1] * 60 + +m[2] : NaN;
+  }
+
+  /** 曜日を「火・金」のように短く（一覧・繰り返しの値に使う） */
+  function daysLabel(days) {
+    var d = (days || []).slice().sort(function (a, b) { return a - b; });
+    var k = d.join(',');
+    if (k === '0,1,2,3,4,5,6') return '毎日';
+    if (k === '0,1,2,3,4') return '平日';
+    if (k === '5,6') return '週末';
+    if (!d.length) return '曜日なし';
+    return d.map(function (i) { return DAYS[i]; }).join('・');
+  }
+
+  /** '2026-09-27' -> '9/27（日）' */
+  function onceLabel(ymd) {
+    if (!ymd) return '';
+    var d = parseLocal(ymd);
+    if (isNaN(d.getTime())) return '';
+    return (d.getMonth() + 1) + '/' + d.getDate() + '（' + DAYS[(d.getDay() + 6) % 7] + '）';
+  }
+
+  function leadLabel(leads) {
+    return (leads || []).map(function (m) { return m + '分前'; }).join('・');
+  }
+
+  /** 毎月・毎年の日付 '毎月25日' / '毎月末' / '毎年1月1日' / '毎年2月末' */
+  function dateRule(s) {
+    if (s.kind === 'monthly') return describeDom(s.day_of_month);
+    return '毎年' + s.month + '月' + describeDom(s.day_of_month, true);
+  }
+
+  /** 編集シートの「繰り返し ›」の値 */
+  function repeatSummary(d) {
+    if (d.kind === 'once') return '1回だけ ' + onceLabel(d.date);
+    if (d.kind === 'monthly' || d.kind === 'yearly') return dateRule(d);
+    if (d.kind === 'interval') {
+      var dl = daysLabel(d.days);
+      return d.every_minutes + '分ごと' + (dl === '毎日' ? '' : ' · ' + dl);
+    }
+    return daysLabel(d.days);
+  }
+
+  /** 一覧の行: 大きく出す時刻（mid=true は少し小さい字で出す長さのもの） */
+  function rowTime(s) {
+    if (s.kind === 'interval') {
+      return { text: shortHM(s.window.start) + ' – ' + shortHM(s.window.end), mid: true };
+    }
+    if (s.kind === 'once') return { text: onceLabel(s.date) + shortHM(s.time), mid: true };
+    return { text: shortHM(s.time), mid: false };
+  }
+
+  /** 一覧の行: 「名前 · 平日」を意味のまとまりに分けたもの（先頭の空白はまとまりの区切り） */
+  function rowLabelParts(s) {
+    if (s.kind === 'interval') {
+      return [s.name, ' · ' + s.every_minutes + '分ごと', ' · ' + daysLabel(s.days)];
+    }
+    if (s.kind === 'once') return [s.name];
+    if (s.kind === 'monthly' || s.kind === 'yearly') return [s.name, ' · ' + dateRule(s)];
+    return [s.name, ' · ' + daysLabel(s.days)];
+  }
+
+  /** 一覧の並び順（区分の中で時刻順） */
+  function sortKey(s) {
+    if (s.kind === 'once') return s.date + ' ' + s.time;
+    if (s.kind === 'interval') return (s.window || {}).start || '';
+    if (s.kind === 'yearly') {
+      return pad2(s.month) + '-' + (s.day_of_month === 'last' ? '32' : pad2(s.day_of_month)) + ' ' + s.time;
+    }
+    if (s.kind === 'monthly') {
+      return (s.day_of_month === 'last' ? '32' : pad2(s.day_of_month)) + ' ' + s.time;
+    }
+    return s.time || '';
+  }
+
+  /** その時刻（'HH:MM' か分）が禁止時間に入るか。サーバの in_quiet_hours と同じ判定。 */
+  function inQuiet(q, hhmm) {
+    if (!q || !q.enabled) return false;
+    var start = toMin(q.start), end = toMin(q.end);
+    var cur = typeof hhmm === 'number' ? hhmm : toMin(hhmm);
+    if (start === end || isNaN(cur)) return false;
+    if (start < end) return start <= cur && cur < end;
+    return cur >= start || cur < end;
+  }
+
+  /** 予定の本番が禁止時間にかかるか: 'all'（全部鳴らない）/ 'some'（一部）/ ''（かからない） */
+  function quietState(s, q) {
+    if (!q || !q.enabled) return '';
+    if (s.kind !== 'interval') return inQuiet(q, s.time) ? 'all' : '';
+    var w = s.window || {};
+    var start = toMin(w.start), end = toMin(w.end);
+    if (end <= start) end += 1440;
+    var step = Math.max(1, Number(s.every_minutes) || 60);
+    var hit = 0, n = 0;
+    for (var t = start; t <= end; t += step) {
+      n++;
+      if (inQuiet(q, t % 1440)) hit++;
+    }
+    if (!hit) return '';
+    return hit === n ? 'all' : 'some';
+  }
+
+  /** 次の予定の帯に添える注意（鳴らない理由）。鳴るなら空文字 */
+  function nextNote(next, settings) {
+    settings = settings || {};
+    if (!next) return '';
+    if (settings.master_enabled === false) return '全体がオフなので鳴りません';
+    if (next.quiet) {
+      var q = settings.quiet_hours || {};
+      return '禁止時間（' + shortHM(q.start) + '〜' + shortHM(q.end) + '）なので鳴りません';
+    }
+    return '';
+  }
+
+  /** タイムラインの 1 件の状態 [表示する文, 鳴らないので破線にするか] */
+  function eventState(e, master) {
+    if (e.past) {
+      if (e.result === 'fired') return ['再生しました', false];
+      if (e.result === 'skipped') {
+        return [e.quiet ? '禁止時間のため鳴らしませんでした' : '鳴らしませんでした（全体オフ）', false];
+      }
+      if (e.result === 'missed') return ['過ぎていたため鳴らしませんでした', false];
+      if (!e.enabled) return ['オフの予定', false];
+      return ['過ぎました', false];
+    }
+    if (!e.enabled) return ['オフの予定なので鳴りません', true];
+    if (master === false) return ['全体がオフなので鳴りません', true];
+    if (e.quiet) return ['禁止時間なので鳴りません', true];
+    return [null, false];
+  }
+
+  /** /api/calendar の days を、発火時刻の日付ごとに振り分け直す。
+      0 時台の予定の予告は前日に鳴るので、前日の欄に入れる。予告には本番の時刻 main_at を付ける。 */
+  function eventsByDate(days) {
+    var out = {};
+    (days || []).forEach(function (d) {
+      d.events.forEach(function (e) {
+        var ev = Object.assign({}, e);
+        if (e.tag === 'lead') {
+          var m = new Date(parseLocal(e.at).getTime() + e.lead * 60000);
+          ev.main_at = isoDate(m) + 'T' + pad2(m.getHours()) + ':' + pad2(m.getMinutes()) + ':00';
+        } else {
+          ev.main_at = e.at;
+        }
+        var key = e.at.slice(0, 10);
+        (out[key] = out[key] || []).push(ev);
+      });
+    });
+    Object.keys(out).forEach(function (k) {
+      out[k].sort(function (a, b) {
+        if (a.at !== b.at) return a.at < b.at ? -1 : 1;
+        return (a.tag === 'lead' ? 0 : 1) - (b.tag === 'lead' ? 0 : 1);
+      });
+    });
+    return out;
+  }
+
+  /** 1回だけの予定の過去警告の文（過ぎていなければ空） */
+  function pastWarning(d, now) {
+    return isPast(d, now) ? 'この日時はもう過ぎています。保存しても鳴りません。' : '';
+  }
+
   root.SL = {
     DAYS: DAYS, pad2: pad2, isoDate: isoDate, parseLocal: parseLocal, addDays: addDays,
     weekStart: weekStart, sameDay: sameDay, weekRangeLabel: weekRangeLabel,
@@ -158,5 +331,10 @@
     describeQuiet: describeQuiet, volumePct: volumePct, isPast: isPast,
     domOptions: domOptions, monthOptions: monthOptions, intervalOptions: intervalOptions,
     domHint: domHint,
+    SECTIONS: SECTIONS, shortHM: shortHM, daysLabel: daysLabel, onceLabel: onceLabel,
+    leadLabel: leadLabel, dateRule: dateRule, repeatSummary: repeatSummary, rowTime: rowTime,
+    rowLabelParts: rowLabelParts, sortKey: sortKey, inQuiet: inQuiet, quietState: quietState,
+    nextNote: nextNote, eventState: eventState, eventsByDate: eventsByDate,
+    pastWarning: pastWarning,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
