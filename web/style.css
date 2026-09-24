@@ -204,6 +204,10 @@ main {
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm);
 }
 .today-row.is-lead { border-left: 3px solid var(--lead); }
+.today-row.is-quiet .today-time, .today-row.is-quiet .today-name {
+  color: var(--ink-3); text-decoration: line-through;
+}
+.today-row.is-quiet .today-rel { color: var(--lead); }
 .today-row.is-next { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .today-time { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 3.4em; }
 .today-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

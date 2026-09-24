@@ -28,11 +28,12 @@ Mac mini を「時間になったら音を鳴らす箱」にする小さなツ�
 ```sh
 scripts/install-service.sh                        # この Mac の中だけ（ポート 8777）
 scripts/install-service.sh 8777 0.0.0.0 himitsu   # 同じ LAN のスマホからも開く（合言葉つき）
-scripts/status.sh                                 # 動いているかの確認
+scripts/status.sh                                 # 動作確認とアクセス先の表示
 scripts/uninstall-service.sh                      # 自動起動をやめる
 ```
 
 落ちても launchd が起こし直します。Mac を再起動してもログインすれば自動で立ち上がります。
+`scripts/status.sh` は合言葉つきの URL（スマホ用も）をそのまま表示します。
 
 ## 画面
 

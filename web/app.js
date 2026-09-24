@@ -152,11 +152,12 @@ function renderToday() {
   if (!day) { box.append(el('p', 'today-none', '今日は別の週を見ています')); return; }
   if (!rows.length) { box.append(el('p', 'today-none', '今日はもう鳴りません')); return; }
   rows.slice(0, 8).forEach(function (ev, i) {
-    var row = el('div', 'today-row' + (ev.tag === 'lead' ? ' is-lead' : '') + (i === 0 ? ' is-next' : ''));
+    var row = el('div', 'today-row' + (ev.tag === 'lead' ? ' is-lead' : '')
+      + (i === 0 && !ev.quiet ? ' is-next' : '') + (ev.quiet ? ' is-quiet' : ''));
     row.append(el('div', 'today-time', ev.time));
     row.append(el('div', 'today-name',
       ev.name + (ev.tag === 'lead' ? '（' + ev.lead + '分前の予告）' : '')));
-    row.append(el('div', 'today-rel', SL.fmtCountdown(ev.at)));
+    row.append(el('div', 'today-rel', ev.quiet ? '禁止時間' : SL.fmtCountdown(ev.at)));
     row.addEventListener('click', function () { openEditorById(ev.schedule_id); });
     box.append(row);
   });
