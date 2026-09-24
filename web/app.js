@@ -71,6 +71,19 @@ function el(tag, cls, text) {
   return e;
 }
 
+// 日本語の文を意味のまとまり（parts）ごとに折り返すための要素。
+// まとまりの途中では改行せず、まとまりの間でだけ折り返す（1つが長すぎる場合だけ中で折り返す）。
+function phrased(tag, cls, parts) {
+  const e = el(tag, cls);
+  for (const p of parts) {
+    if (!p) continue;
+    // 先頭の空白は inline-block の中だと消えるので、まとまりの外（折り返し可能な位置）に出す
+    if (/^\s/.test(p) && e.childNodes.length) e.append(' ');
+    e.append(el('span', 'ph', p.trim()));
+  }
+  return e;
+}
+
 function mkSwitch(checked, label, onChange) {
   const b = el('button', 'switch');
   b.type = 'button';
@@ -241,20 +254,14 @@ function leadLabel(leads) {
   return (leads || []).map((m) => `${m}分前`).join('・');
 }
 
-function whatLabel(a) {
+function whatParts(a) {
   a = a || {};
-  let s = '';
-  if (a.type === 'sound') s = soundLabel(a.sound);
-  else if (a.type === 'both') s = `${soundLabel(a.sound)}＋読み上げ`;
-  else if (a.type === 'speak') s = `読み上げ「${a.text || ''}」`;
-  if (a.repeat > 1) s += ` ×${a.repeat}`;
-  return s;
-}
-
-function whatLong(a) {
-  a = a || {};
-  if (a.type === 'both') return `${soundLabel(a.sound)}＋「${a.text || ''}」`;
-  return whatLabel(a);
+  const parts = [];
+  if (a.type === 'sound') parts.push(soundLabel(a.sound));
+  else if (a.type === 'both') parts.push(soundLabel(a.sound), '＋読み上げ');
+  else if (a.type === 'speak') parts.push('読み上げ', `「${a.text || ''}」`);
+  if (a.repeat > 1) parts.push(` ×${a.repeat}`);
+  return parts;
 }
 
 function inQuiet(settings, d) {
@@ -279,7 +286,7 @@ function renderBanner() {
     const tile = el('span', 'tile');
     tile.append(icon('power', 22));
     const text = el('div', 'banner-text');
-    text.append(el('span', 'banner-main', '全体がオフです'), el('span', 'banner-sub', '予定は鳴りません'));
+    text.append(phrased('span', 'banner-main', ['全体がオフです']), phrased('span', 'banner-sub', ['予定は鳴りません']));
     const on = el('button', 'pill-btn', 'オンにする');
     on.type = 'button';
     on.addEventListener('click', () => setMaster(true));
@@ -295,8 +302,8 @@ function renderBanner() {
     const rel = fmtRelative(next.at);
     const when = fmtWhen(next.at);
     const sub = new Date(next.at) - new Date() < 86400000 && rel ? `次は ${rel} · ${when}` : `次は ${when}`;
-    const main = next.tag === 'lead' ? `${next.name}（${next.lead}分前の予告）` : next.name;
-    text.append(el('span', 'banner-sub', sub), el('span', 'banner-main', main));
+    const main = next.tag === 'lead' ? [next.name, `（${next.lead}分前の予告）`] : [next.name];
+    text.append(phrased('span', 'banner-sub', sub.split(/(?= · )/)), phrased('span', 'banner-main', main));
   } else {
     text.append(el('span', 'banner-sub', '次の予定'), el('span', 'banner-main', 'いまは鳴る予定がありません'));
   }
@@ -356,22 +363,24 @@ function alarmRow(s) {
 
   const main = el('button', 'alarm-main');
   main.type = 'button';
-  let time, label;
+  let time, labelParts;
   if (s.kind === 'interval') {
     time = `${shortHM(s.window.start)} – ${shortHM(s.window.end)}`;
-    label = `${s.name} · ${s.every_minutes}分ごと · ${daysLabel(s.days)}`;
+    labelParts = [s.name, ` · ${s.every_minutes}分ごと`, ` · ${daysLabel(s.days)}`];
   } else if (s.kind === 'once') {
     time = `${onceLabel(s.date)}${shortHM(s.time)}`;
-    label = s.name;
+    labelParts = [s.name];
   } else {
     time = shortHM(s.time);
-    label = `${s.name} · ${daysLabel(s.days)}`;
+    labelParts = [s.name, ` · ${daysLabel(s.days)}`];
   }
+  const label = labelParts.join('');
   main.append(el('span', 'alarm-time' + (s.kind === 'daily' ? '' : ' is-mid'), time));
-  main.append(el('span', 'alarm-label', label));
-  let detail = whatLabel(s.action);
-  if (s.lead_times && s.lead_times.length) detail += ` · ${leadLabel(s.lead_times)}に予告`;
-  main.append(el('span', 'alarm-detail', detail));
+  main.append(phrased('span', 'alarm-label', labelParts));
+  const detailParts = whatParts(s.action);
+  if (s.lead_times && s.lead_times.length) detailParts.push(` · ${leadLabel(s.lead_times)}に予告`);
+  const detail = detailParts.join('');
+  main.append(phrased('span', 'alarm-detail', detailParts));
   if (s.note) main.append(el('span', 'alarm-note', s.note));
   main.setAttribute('aria-label', `${time} ${label}。${detail}。タップで編集`);
   main.addEventListener('click', () => openEditor(s));
@@ -826,7 +835,11 @@ function tlCard(e, leads, sched) {
   top.append(el('span', 't', hmOf(new Date(e.at))), el('span', 'n', e.name));
   if (!e.past && !muted) top.append(el('span', 'rel', fmtRelative(e.at)));
   b.append(top);
-  if (sched) b.append(el('span', 'tl-card-sub', whatLong(sched.action)));
+  if (sched) {
+    const a = sched.action || {};
+    const parts = a.type === 'both' ? [soundLabel(a.sound), `＋「${a.text || ''}」`] : whatParts(a);
+    b.append(phrased('span', 'tl-card-sub', parts));
+  }
   if (leads.length) {
     const pills = el('div', 'tl-pills');
     for (const l of leads) pills.append(el('span', 'tl-pill-s', `${hmOf(new Date(l.at))} 予告`));
