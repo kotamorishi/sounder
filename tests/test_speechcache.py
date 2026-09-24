@@ -77,3 +77,48 @@ class TestSayIsCached(PlayerBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def make_wav(amplitude, n=8000, rate=16000):
+    import array, io, math, wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(array.array("h", (int(amplitude * 32767 * math.sin(i / 8)) for i in range(n))).tobytes())
+    return buf.getvalue()
+
+
+def level(data):
+    import array, io, math, wave
+    with wave.open(io.BytesIO(data)) as w:
+        s = array.array("h", w.readframes(w.getnframes()))
+    rms = math.sqrt(sum(x * x for x in s) / len(s))
+    return 20 * math.log10(rms / 32768), max(abs(x) for x in s) / 32767
+
+
+class TestNormalize(unittest.TestCase):
+    def test_quiet_speech_is_raised_to_the_chime_level(self):
+        from sounder import speechcache
+        db, peak = level(speechcache.normalize_wav(make_wav(0.05)))
+        self.assertAlmostEqual(db, speechcache.TARGET_DBFS, delta=0.5)
+        self.assertLessEqual(peak, speechcache.PEAK_LIMIT + 0.01)
+
+    def test_peak_is_limited(self):
+        from sounder import speechcache
+        # 大きいピークがあると、そこで頭打ちにする（割れない）
+        _db, peak = level(speechcache.normalize_wav(make_wav(0.9)))
+        self.assertLessEqual(peak, speechcache.PEAK_LIMIT + 0.01)
+
+    def test_non_wav_is_left_alone(self):
+        from sounder import speechcache
+        self.assertEqual(speechcache.normalize_wav(b"not a wav"), b"not a wav")
+
+    def test_put_normalizes(self):
+        import tempfile
+        from sounder.speechcache import SpeechCache, TARGET_DBFS
+        with tempfile.TemporaryDirectory() as tmp:
+            c = SpeechCache(Path(tmp))
+            p = c.put(c.path("v", None, "t"), make_wav(0.05))
+            self.assertAlmostEqual(level(p.read_bytes())[0], TARGET_DBFS, delta=0.5)
