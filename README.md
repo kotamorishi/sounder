@@ -116,7 +116,7 @@ iPhone の Safari で使うことを基準にした、iOS の時計アプリに�
 **再配布が禁止されているのでリポジトリには入っていません。** 各自の Mac で取ってきてください。
 
 ```sh
-python3 -m sounder.effects                                          # 声素材以外の全分類（約 1,600 種・約 300MB）
+python3 -m sounder.effects                                          # 声素材以外の全分類（約 1,400 種・約 290MB）
 python3 -m sounder.effects https://soundeffect-lab.info/sound/animal/    # 分類を選んで
 ```
 
