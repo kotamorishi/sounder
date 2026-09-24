@@ -8,9 +8,13 @@
 - **主な利用環境は iPhone の Safari**（LAN 内から開く／ホーム画面に追加）。PC は補助。
   390px 幅を基準に設計し、PC ではその幅のまま中央寄せ（最大 560px 程度）でよい。
 - 今の方針は変えない: **ビルド工程なし・依存ライブラリなし**（`web/index.html` / `style.css` / `app.js` の素の HTML/CSS/JS）。
-  外部 CDN・Web フォントも使わない（この Mac の中だけで完結させる方針のため）。フォントはシステムフォント
-  （`-apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif`）。
-- 既存 REST API はそのまま使う。サーバ側の追加はタイムライン用の 1 本だけ（後述）。
+  外部 CDN は使わない（この Mac の中だけで完結させる方針のため）。書体は **M PLUS Rounded 1c** を
+  `web/fonts/` に同梱して sounder 自身が配信する（Google Fonts などの外部には取りに行かない）。
+  ウェイトは Light(300) / Regular(400) / Medium(500) / Bold(700) の 4 つを woff2 で同梱し、CSS もこの 4 つに揃える。
+  予定名は自由入力なのでサブセットはしない（1 ファイル約 1MB。`/fonts/` だけ長期キャッシュさせる）。
+  ライセンスは SIL Open Font License 1.1（`web/fonts/OFL.txt`）。
+  読み込み前・失敗時の代替は `-apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif`。
+- 既存 REST API はそのまま使う。サーバ側の追加はタイムライン用の 1 本だけ（後述）。ほかは静的配信で同梱フォントの Content-Type と `/fonts/` の長期キャッシュを返す程度。
 - 既存機能は一つも落とさない（予定の CRUD・有効切替・複製・試聴・予告の試聴・プリセット・
   サウンドのアップロード/削除/試聴・設定・静音時間帯・全体オン/オフ・停止・ログ・`n` キー）。
 

@@ -110,13 +110,18 @@ sounder/           アプリ本体
   player.py        afplay / say の呼び出し
   scheduler.py     いつ鳴らすかの計算と 1 秒ごとの判定
   server.py        HTTP サーバ（API と画面の配信）
-web/               画面（HTML / CSS / JS。ビルド不要・外部CDN/フォントなし）
+web/               画面（HTML / CSS / JS。ビルド不要・外部CDNなし）
+  fonts/           同梱フォント M PLUS Rounded 1c（woff2 と OFL.txt）
 sounds/builtin/    自動生成されるチャイム
 sounds/user/       アップロードした音
 data/config.json   予定と設定（これだけバックアップすれば復元できます）
 data/events.log    実行ログ
-tests/             スケジュール計算・タイムライン API のテスト
+tests/             スケジュール計算・タイムライン API・静的配信のテスト
 ```
+
+画面の書体は [M PLUS Rounded 1c](https://fonts.google.com/specimen/M+PLUS+Rounded+1c)
+（Copyright 2016 The Rounded M+ Project Authors）です。SIL Open Font License 1.1 のもとで
+`web/fonts/` に同梱しており（全文は `web/fonts/OFL.txt`）、sounder 自身が配信するので外部には取りに行きません。
 
 ## テスト
 
