@@ -64,6 +64,30 @@ def _rounded(u: float, v: float, radius: float) -> float:
     return 1.0 if dx * dx + dy * dy <= radius * radius else 0.0
 
 
+def render_glyph(size: int, *, zoom: float = 1.45) -> bytes:
+    """背景なし（透過）で、ベルだけをアクセント色で描いた PNG。ブラウザのタブ用（favicon）。
+
+    タブの小さな枠でも見えるよう、ベルを zoom 倍に大きくして真ん中に置く。
+    """
+    rows = []
+    step = 1.0 / (size * SAMPLES)
+    # ベルの縦の中心（持ち手〜振り子の真ん中）を画像の中心に合わせる
+    cy = (0.180 + 0.812) / 2
+    for py in range(size):
+        row = bytearray()
+        for px in range(size):
+            bell = 0.0
+            for sy in range(SAMPLES):
+                v = (py * SAMPLES + sy + 0.5) * step
+                for sx in range(SAMPLES):
+                    u = (px * SAMPLES + sx + 0.5) * step
+                    bell += _bell_alpha((u - 0.5) / zoom + 0.5, (v - 0.5) / zoom + cy)
+            a = round(255 * bell / (SAMPLES * SAMPLES))
+            row += bytes((BG[0], BG[1], BG[2], a))
+        rows.append(bytes(row))
+    return _png(size, size, rows)
+
+
 def render(size: int, *, radius: float = 0.22, transparent: bool = False) -> bytes:
     """size×size の PNG を作って返す。"""
     rows = []
@@ -110,8 +134,10 @@ def _png(width: int, height: int, rows: list[bytes]) -> bytes:
             + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
 
 
+# ホーム画面用は不透明（iOS は透過を黒く塗るため）。ブラウザのタブ用だけ背景を透過する
 SIZES = ((180, "icon-180.png", False), (512, "icon-512.png", False),
          (192, "icon-192.png", False))
+FAVICON = (64, "favicon.png")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -120,7 +146,8 @@ def main(argv: list[str] | None = None) -> int:
     dest.mkdir(parents=True, exist_ok=True)
     for size, name, transparent in SIZES:
         (dest / name).write_bytes(render(size, transparent=transparent))
-    print("作成:", "、".join(name for _s, name, _t in SIZES))
+    (dest / FAVICON[1]).write_bytes(render_glyph(FAVICON[0]))
+    print("作成:", "、".join([name for _s, name, _t in SIZES] + [FAVICON[1]]))
     return 0
 
 

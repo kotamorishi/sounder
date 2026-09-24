@@ -117,3 +117,13 @@ class TestCli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFavicon(unittest.TestCase):
+    def test_background_is_transparent_and_bell_is_accent(self):
+        w, h, rows = read_png(icon.render_glyph(32))
+        self.assertEqual((w, h), (32, 32))
+        px = lambda x, y: tuple(rows[y][x * 4:x * 4 + 4])  # noqa: E731
+        self.assertEqual(px(0, 0)[3], 0, "角は透明")
+        self.assertEqual(px(31, 31)[3], 0, "角は透明")
+        self.assertEqual(px(16, 14), icon.BG + (255,), "ベルの中はアクセント色で不透明")

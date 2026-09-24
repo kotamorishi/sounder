@@ -39,7 +39,8 @@ EXTRA_TYPES = {
 # 同梱フォントは中身が変わらないので長くキャッシュさせる（それ以外は no-store）
 FONT_CACHE = "public, max-age=31536000, immutable"
 # 合言葉なしでも配る静的ファイル（合言葉の入力画面が使う。秘密は含まない）
-PUBLIC_FILES = {"/icon-180.png", "/icon-192.png", "/icon-512.png", "/manifest.webmanifest"}
+PUBLIC_FILES = {"/icon-180.png", "/icon-192.png", "/icon-512.png", "/favicon.png",
+                "/manifest.webmanifest"}
 
 
 class App:
