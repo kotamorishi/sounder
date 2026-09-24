@@ -1,4 +1,4 @@
-"""音の再生（afplay）と読み上げ（say）。すべてローカルのコマンドのみを使う。"""
+"""音の再生（afplay）と読み上げ（say / Qwen3-TTS）。すべてこの Mac の中だけで完結する。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import tones
+from . import neural, tones
 
 SYSTEM_SOUND_DIRS = (
     Path("/System/Library/Sounds"),
@@ -35,7 +35,8 @@ class Player:
     来たら、古いジョブは止めて新しい方を鳴らす（鳴り続けて重なるのを防ぐ）。
     """
 
-    def __init__(self, builtin_dir: Path, user_dir: Path, *, log=None) -> None:
+    def __init__(self, builtin_dir: Path, user_dir: Path, *, log=None,
+                 neural_tts: neural.NeuralTTS | None = None) -> None:
         self.builtin_dir = builtin_dir
         self.user_dir = user_dir
         self._log = log or (lambda *a, **k: None)
@@ -48,6 +49,7 @@ class Player:
         self._tmpdir = Path(tempfile.mkdtemp(prefix="sounder-say-"))
         self.afplay = shutil.which("afplay")
         self.say = shutil.which("say")
+        self.neural = neural_tts
 
     # --- サウンドの解決 ---------------------------------------------------
 
@@ -116,7 +118,11 @@ class Player:
         return {"builtin": builtin, "system": system, "user": user}
 
     def voices(self) -> list[dict]:
-        """say が使える音声。日本語を先に並べる。"""
+        """読み上げに使える声。Qwen3-TTS（動いていれば）を先に、次に say の声を日本語から。"""
+        extra = self.neural.voices() if self.neural else []
+        return extra + self._say_voices()
+
+    def _say_voices(self) -> list[dict]:
         if not self.say:
             return []
         try:
@@ -283,7 +289,12 @@ class Player:
         if atype in ("speak", "both"):
             voice = action.get("voice") or settings.get("default_voice") or ""
             rate = action.get("rate") or settings.get("speak_rate") or 180
-            tmp = self._say_to_file(action["text"], voice, rate)
+            tmp = None
+            if neural.is_neural(voice):
+                tmp = self.neural.render(action["text"], voice) if self.neural else None
+                voice = ""  # 作れなかったら say のシステム既定の声で代わりに読む
+            if tmp is None:
+                tmp = self._say_to_file(action["text"], voice, rate)
             if tmp:
                 items.append([self.afplay, "-v", f"{volume:.3f}", str(tmp)])
 
@@ -306,6 +317,16 @@ class Player:
                     os.unlink(p)
                 except OSError:
                     pass
+
+    def prefetch(self, action: dict, *, settings: dict) -> None:
+        """もうすぐ鳴る予定の読み上げを先に作っておく（Qwen3-TTS は生成に数秒かかるため）。"""
+        if action.get("type") not in ("speak", "both") or not self.neural:
+            return
+        voice = action.get("voice") or settings.get("default_voice") or ""
+        text = action.get("text") or ""
+        if neural.is_neural(voice) and text.strip():
+            threading.Thread(target=self.neural.render, args=(text, voice),
+                             name="tts-prefetch", daemon=True).start()
 
     # --- アップロード -----------------------------------------------------
 

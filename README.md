@@ -5,7 +5,7 @@ Mac mini を「時間になったら音を鳴らす箱」にする小さなツ�
 読み上げを鳴らします。お出かけ時刻の 10 分前に「ピンポーン」で予告する、といった使い方を想定しています。
 
 - **この Mac の中だけで完結します。** 外部のサービスには一切つなぎません。
-- **追加インストール不要。** macOS の python3 / `afplay` / `say` だけで動きます（pip も不要）。
+- **追加インストール不要。** macOS の python3 / `afplay` / `say` だけで動きます（pip も不要。自然な声の Qwen3-TTS は任意で追加）。
 - 待ち受けは既定で `127.0.0.1` のみ。同じ Mac のブラウザからしか開けません。
 
 <p align="center">
@@ -85,7 +85,8 @@ iPhone の Safari で使うことを基準にした、iOS の時計アプリに�
 鳴らすものは 3 通りです。
 
 - **サウンド** … 内蔵チャイム／自分の音楽ファイル／macOS のシステムサウンド
-- **読み上げ** … `say` で文章を読み上げ（日本語の声を自動で選びます）
+- **読み上げ** … `say` で文章を読み上げ（日本語の声を自動で選びます）。
+  [機械学習の声](#もっと自然な声qwen3-tts) を入れると、そちらも選べます
 - **両方** … チャイムのあとに読み上げ
 
 ### 内蔵サウンド
@@ -97,6 +98,26 @@ iPhone の Safari で使うことを基準にした、iOS の時計アプリに�
 
 自分の音楽を使う場合は「音」タブからアップロードしてください
 （mp3 / m4a / wav / aiff など、30MB まで。`sounds/user/` に置かれます）。
+
+### もっと自然な声（Qwen3-TTS）
+
+`say` の声が機械っぽいと感じたら、この Mac の中で動く音声合成モデル
+[Qwen3-TTS](https://qwen.ai/blog?id=qwen3tts-0115)（1.7B、Apache-2.0）を追加できます。
+Apple Silicon 専用で、[`uv`](https://docs.astral.sh/uv/)（`brew install uv`）が必要です。
+
+```sh
+scripts/install-tts.sh      # 専用の Python 環境を .venv-tts/ に作り、自動起動に登録
+```
+
+- 初回はモデル（約 4GB）をダウンロードします。常駐中はメモリを 3〜4GB ほど使います。
+- 準備ができると、声の一覧の先頭に「Ono Anna（Qwen3-TTS）」（日本語）、
+  「Ryan」「Aiden」（英語）などが出ます。文章にかなが入っていれば日本語として読みます。
+- 1 文の生成に数秒かかるので、**鳴る 3 分前から先に作っておき**、作った音声は
+  `data/tts-cache/` に取っておきます（同じ文章なら 2 回目からはすぐ鳴ります）。
+- 「話す速さ」の設定は `say` の声だけに効きます。
+- モデルのサーバ（127.0.0.1:8778、外からは見えません）が止まっていたら、
+  **標準の声（`say`）で代わりに読み上げます**。鳴らないことはありません。
+- 解除は `scripts/uninstall-tts.sh`。sounder 本体は今までどおり標準ライブラリだけで動きます。
 
 ## 鳴らしすぎないための作り
 
@@ -139,6 +160,7 @@ sounder/           アプリ本体
   tones.py         内蔵チャイム／メロディーの合成
   config.py        設定ファイルの読み書きと入力検証
   player.py        afplay / say の呼び出し
+  neural.py        Qwen3-TTS サーバへの橋渡しと音声のキャッシュ
   scheduler.py     いつ鳴らすかの計算と 1 秒ごとの判定
   eventlog.py      実行ログ
   icon.py          アイコン PNG の生成
@@ -151,10 +173,12 @@ web/               画面（外部CDNなし）
   unlock.html      合言葉の入力画面
   icon-*.png       ホーム画面用のアイコン（sounder/icon.py で生成）
   fonts/           同梱の M PLUS Rounded 1c（woff2）とライセンス（OFL.txt）
+tts/qwen_server.py Qwen3-TTS を常駐させる小さなサーバ（.venv-tts/ で動く）
 sounds/builtin/    自動生成されるチャイム
 sounds/user/       アップロードした音
 data/config.json   予定と設定（これだけバックアップすれば復元できます）
 data/events.log    実行ログ
+data/tts-cache/    Qwen3-TTS で作った読み上げ（消してもかまいません）
 tests/             テスト一式
   ui/              画面を PNG に撮って目視確認するための道具
 ```

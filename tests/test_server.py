@@ -17,6 +17,8 @@ from http.client import HTTPConnection
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# 本物の Qwen3-TTS が動いていても触らない（誰も待ち受けていないポートへ向ける）
+os.environ["SOUNDER_TTS_URL"] = "http://127.0.0.1:9"
 
 from sounder import server as server_mod  # noqa: E402
 

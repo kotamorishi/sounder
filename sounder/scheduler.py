@@ -12,6 +12,9 @@ LAST_DAY = "last"
 
 # スリープ復帰などで取りこぼした通知を、何秒前までなら鳴らすか
 DEFAULT_GRACE = 120.0
+# 読み上げを何秒前から作り始めるか（Qwen3-TTS は 1 文に数秒かかる）と、その見回り間隔
+PREFETCH_AHEAD = 180.0
+PREFETCH_EVERY = 30.0
 
 
 def _minutes(hhmm: str) -> int:
@@ -260,6 +263,8 @@ class Scheduler:
         self._thread: threading.Thread | None = None
         self._last_tick = datetime.now()
         self._fired: set[str] = set()
+        self._prefetched: set[str] = set()
+        self._next_prefetch = datetime.min
 
     def start(self) -> None:
         self._last_tick = datetime.now()
@@ -295,6 +300,27 @@ class Scheduler:
                 self._fire(sched, when, tag, lead, now, settings)
         if len(self._fired) > 4000:
             self._fired = set(list(self._fired)[-1000:])
+        if now >= self._next_prefetch:
+            self._next_prefetch = now + timedelta(seconds=PREFETCH_EVERY)
+            self._prefetch(now, settings)
+
+    def _prefetch(self, now: datetime, settings: dict) -> None:
+        """もうすぐ鳴る予定の読み上げを、再生層に先に作らせる。"""
+        prefetch = getattr(self.player, "prefetch", None)
+        if prefetch is None:
+            return
+        hi = now + timedelta(seconds=PREFETCH_AHEAD)
+        for sched in self.store.schedules():
+            if not sched.get("enabled"):
+                continue
+            for when, tag, lead in events_between(sched, now, hi):
+                key = f"{sched['id']}|{when.isoformat()}|{tag}{lead}"
+                if key in self._prefetched:
+                    continue
+                self._prefetched.add(key)
+                prefetch(self.action_for(sched, tag, lead, settings), settings=settings)
+        if len(self._prefetched) > 4000:
+            self._prefetched = set(list(self._prefetched)[-1000:])
 
     def _fire(self, sched: dict, when: datetime, tag: str, lead: int, now, settings) -> None:
         name = sched["name"]

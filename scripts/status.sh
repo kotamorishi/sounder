@@ -23,5 +23,12 @@ if curl -sf -m 3 "http://127.0.0.1:$PORT/api/now$Q" >/dev/null 2>&1; then
 else
   echo "サーバ: 応答なし（ポート $PORT）"
 fi
+if curl -sf -m 2 "http://127.0.0.1:8778/speakers" >/dev/null 2>&1; then
+  echo "Qwen3-TTS: 応答あり"
+elif launchctl print "gui/$(id -u)/com.local.sounder-tts" >/dev/null 2>&1; then
+  echo "Qwen3-TTS: 起動中（モデルを読み込んでいるか、エラー。data/tts.log を確認）"
+else
+  echo "Qwen3-TTS: 未登録（標準の声で読み上げ。scripts/install-tts.sh で登録）"
+fi
 LOG="$(cd "$(dirname "$0")/.." && pwd)/data/events.log"
 [ -f "$LOG" ] && { echo "--- 直近のログ ---"; tail -10 "$LOG"; }

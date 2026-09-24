@@ -506,7 +506,7 @@ function renderSettings() {
   $('#quiet-start').value = q.start || '23:00';
   $('#quiet-end').value = q.end || '07:00';
   $('#quiet-desc').textContent = SL.describeQuiet(q);
-  $('#set-voice-val').textContent = st.default_voice || 'システム既定';
+  $('#set-voice-val').textContent = voiceLabel(st.default_voice) || 'システム既定';
   if (!$('#push-voice').hidden) renderVoiceList($('#set-voice-list'), st.default_voice, (v) => saveSettings({ default_voice: v }));
 }
 
@@ -549,14 +549,20 @@ function renderVoiceList(box, chosen, onPick, firstTitle) {
   mk(firstTitle || null, [['', 'システム既定']]);
   const ja = state.voices.filter((v) => v.locale.startsWith('ja'));
   const other = state.voices.filter((v) => !v.locale.startsWith('ja'));
-  if (ja.length) mk('日本語', ja.map((v) => [v.name, v.name, v.locale]));
-  if (other.length) mk('その他の言語', other.map((v) => [v.name, v.name, v.locale]));
+  if (ja.length) mk('日本語', ja.map((v) => [v.name, v.label || v.name, v.locale]));
+  if (other.length) mk('その他の言語', other.map((v) => [v.name, v.label || v.name, v.locale]));
   if (chosen && !state.voices.some((v) => v.name === chosen)) {
     mk('見つからない声', [[chosen, chosen, 'この Mac にありません']]);
   }
   if (!state.voices.length) {
     box.append(el('p', 'footnote', 'この環境では読み上げの声の一覧を取得できませんでした。'));
   }
+}
+
+// 声の表示名（Qwen3-TTS の声は内部名 "qwen:ono_anna" ではなく読みやすい名前で出す）
+function voiceLabel(name) {
+  const v = state.voices.find((x) => x.name === name);
+  return (v && v.label) || name;
 }
 
 function renderLog() {

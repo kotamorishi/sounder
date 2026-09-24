@@ -21,7 +21,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import scheduler as sched_mod
-from . import tones
+from . import neural, tones
 from .config import Store, ValidationError
 from .eventlog import EventLog
 from .player import Player, SoundNotFound
@@ -53,7 +53,9 @@ class App:
         made = tones.generate_all(self.builtin_dir)
         if made:
             self.log("info", f"内蔵サウンドを生成しました（{len(made)}件）")
-        self.player = Player(self.builtin_dir, self.user_dir, log=self.log)
+        tts = neural.NeuralTTS(home / "data" / "tts-cache", log=self.log,
+                               url=os.environ.get("SOUNDER_TTS_URL", neural.DEFAULT_URL))
+        self.player = Player(self.builtin_dir, self.user_dir, log=self.log, neural_tts=tts)
         # 保存時にサウンドの存在を確かめる（鳴らす瞬間に気づくのでは遅い）
         self.store = Store(home / "data" / "config.json", sound_check=self.player.resolve)
         self.scheduler = Scheduler(self.store, self.player, self.log)
