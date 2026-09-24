@@ -13,8 +13,16 @@
       setTimeout(function () {
         click.split('|').forEach(function (sel, i) {
           setTimeout(function () {
-            var n = f.contentWindow.document.querySelector(sel);
-            if (n) n.click();
+            // "type:セレクタ=文字" は入力欄に文字を入れる（検索の見た目を撮る用）
+            var m = /^type:([^=]+)=(.*)$/.exec(sel);
+            var n = f.contentWindow.document.querySelector(m ? m[1] : sel);
+            if (!n) return;
+            if (m) {
+              n.value = m[2];
+              n.dispatchEvent(new f.contentWindow.Event('input', { bubbles: true }));
+            } else {
+              n.click();
+            }
           }, i * 400);
         });
       }, Number(q.get('delay') || 900));

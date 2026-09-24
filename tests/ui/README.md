@@ -14,4 +14,5 @@ tests/ui/screenshot.sh /tmp/sounder-shots 8799
 コピーされ、終了時に消えます。
 
 画面の中身（描画がエラーなく終わるか）は `tests/test_web_lib.py` が自動で確かめます。
+クリックするセレクタは `|` で続けられ、`type:セレクタ=文字` と書くとその入力欄に文字を入れます。
 Chrome の場所が違うときは `CHROME=/path/to/chrome tests/ui/screenshot.sh ...` のように渡してください。

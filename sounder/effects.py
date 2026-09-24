@@ -3,8 +3,10 @@
 効果音ラボの音は無料で使えるが再配布は禁止なので、リポジトリには入れない。
 各自の Mac で次を実行して sounds/effects/<分類>/ にダウンロードする（sounds/effects は git の外）。
 
-  python3 -m sounder.effects                       ボタン・システム音（既定）
-  python3 -m sounder.effects https://soundeffect-lab.info/sound/anime/   ほかの分類も同じ形で
+  python3 -m sounder.effects                       全分類（ボタン・環境音・動物・生活・声素材など）
+  python3 -m sounder.effects https://soundeffect-lab.info/sound/anime/   分類を選んで
+
+分類のトップページから、同じ分類の続きのページ（battle2.html など）もたどって 1 つの分類にまとめる。
 
 分類ごとに manifest.json（ファイル名・題名・説明）を置き、画面の一覧とランダム再生に使う。
 相手のサーバに負担をかけないよう、1 ファイルずつ間をあけて取る。取得済みのものは取り直さない。
@@ -21,9 +23,15 @@ import time
 import urllib.parse
 from pathlib import Path
 
-DEFAULT_PAGES = ["https://soundeffect-lab.info/sound/button/"]
+SITE = "https://soundeffect-lab.info"
+DEFAULT_PAGES = [SITE + p for p in (
+    "/sound/button/", "/sound/environment/", "/sound/animal/", "/sound/anime/", "/sound/battle/",
+    "/sound/machine/", "/sound/various/", "/sound/voice/game.html",
+)]
 UA = "Mozilla/5.0 (Macintosh) sounder/1.0 (personal use)"
-ITEM_RE = re.compile(r'<li><span>([^<]+)</span>([^<]*)<a href="([^"]+\.mp3)"')
+# 声素材のページは題名の前に小さなアイコンが入る
+ITEM_RE = re.compile(r'<li>(?:<img[^>]*>)?<span>([^<]+)</span>([^<]*)<a href="([^"]+\.mp3)"')
+COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 TITLE_RE = re.compile(r"<h1>([^<]+)</h1>")
 DELAY = 1.0
 
@@ -31,7 +39,8 @@ DELAY = 1.0
 def parse_page(page_html: str) -> tuple[str, list[dict]]:
     """ページの題名と、効果音の一覧（題名・説明・mp3 の相対パス）を取り出す。"""
     m = TITLE_RE.search(page_html)
-    title = re.sub(r"\[\d+\]$", "", html.unescape(m.group(1)).strip()) if m else ""
+    title = html.unescape(m.group(1)).strip() if m else ""
+    title = re.sub(r"\[\d+\]$", "", title.split(" - ")[0]).strip()  # 「声素材 - ゲームの戦闘」→「声素材」
     items = []
     for name, desc, href in ITEM_RE.findall(page_html):
         items.append({"title": html.unescape(name).strip(), "desc": html.unescape(desc).strip(),
@@ -40,9 +49,18 @@ def parse_page(page_html: str) -> tuple[str, list[dict]]:
 
 
 def category_of(url: str) -> str:
-    """https://soundeffect-lab.info/sound/button/ → button"""
+    """https://soundeffect-lab.info/sound/button/ → button、/sound/voice/game.html → voice"""
     parts = [p for p in urllib.parse.urlparse(url).path.split("/") if p]
+    if len(parts) >= 2 and parts[0] == "sound":
+        return re.sub(r"[^A-Za-z0-9_-]", "_", parts[1])
     return re.sub(r"[^A-Za-z0-9_-]", "_", parts[-1].removesuffix(".html")) if parts else "misc"
+
+
+def sibling_pages(page_url: str, page_html: str) -> list[str]:
+    """同じ分類の続きのページ（/sound/battle/battle2.html など）。コメントアウトされたリンクは除く。"""
+    d = urllib.parse.urlparse(page_url).path.rsplit("/", 1)[0] + "/"
+    found = re.findall(r'href="(%s[^"#?/]+\.html)"' % re.escape(d), COMMENT_RE.sub("", page_html))
+    return [urllib.parse.urljoin(page_url, u) for u in dict.fromkeys(found)]
 
 
 def _get(url: str, referer: str | None = None) -> bytes:
@@ -57,18 +75,36 @@ def _get(url: str, referer: str | None = None) -> bytes:
 
 
 def fetch(page_url: str, dest_root: Path, *, out=print, delay: float = DELAY) -> int:
-    """1 ページ分を dest_root/<分類>/ に取る。新しく取った数を返す。"""
-    title, items = parse_page(_get(page_url).decode("utf-8", "replace"))
+    """1 分類（続きのページも含めて）を dest_root/<分類>/ に取る。新しく取った数を返す。"""
+    first = _get(page_url).decode("utf-8", "replace")
+    title, _ = parse_page(first)
+    pages = [(page_url, first)]
+    for url in sibling_pages(page_url, first):
+        if url != page_url:
+            time.sleep(delay)
+            try:
+                pages.append((url, _get(url).decode("utf-8", "replace")))
+            except OSError as exc:
+                out(f"  {url} を読めませんでした（{exc}）")
     cat = category_of(page_url)
     dest = dest_root / cat
     dest.mkdir(parents=True, exist_ok=True)
     got = 0
     files = []
-    for it in items:
+    seen = set()
+    items = [(url, it) for url, body in pages for it in parse_page(body)[1]]
+    for url, it in items:
         name = Path(urllib.parse.urlparse(it["href"]).path).name
+        if name in seen:
+            continue
+        seen.add(name)
         path = dest / name
         if not path.exists():
-            data = _get(urllib.parse.urljoin(page_url, it["href"]), referer=page_url)
+            try:
+                data = _get(urllib.parse.urljoin(url, it["href"]), referer=url)
+            except OSError as exc:
+                out(f"  {it['title']} を取れませんでした（{exc}）")
+                continue
             tmp = path.with_suffix(".part")
             tmp.write_bytes(data)
             tmp.replace(path)

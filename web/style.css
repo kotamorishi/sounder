@@ -1094,3 +1094,66 @@ input[type="range"]::-moz-range-thumb {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* 効果音・ランダムの分類ごとの折りたたみ */
+details.fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary::after {
+  content: "";
+  margin-left: auto;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform .15s;
+}
+details.fold[open] > summary::after { transform: rotate(45deg); }
+details.fold > summary .fold-n { color: var(--ink-off); font-weight: 400; }
+details.fold:not([open]) { margin-bottom: 4px; }
+
+/* 一覧の検索欄と絞り込み */
+.search-tools { margin: 0 0 14px; }
+.search-input {
+  display: block;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--fill);
+  color: var(--ink);
+  font-size: 17px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.search-input::placeholder { color: var(--ink-off); }
+.search-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.chips {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.chips::-webkit-scrollbar { display: none; }
+.chips button {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 14px;
+  white-space: nowrap;
+}
+.chips button.is-on { background: var(--accent); color: #fff; }
+.search-empty { text-align: center; padding: 16px 0; }

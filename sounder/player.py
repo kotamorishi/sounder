@@ -169,14 +169,14 @@ class Player:
             for f in c["files"]:
                 effects.append({"ref": f"effect:{c['category']}/{f['file']}", "label": f["title"],
                                 "sub": f["desc"], "category": c["title"]})
-            randoms.append({"ref": f"random:{c['category']}",
+            randoms.append({"ref": f"random:{c['category']}", "category": c["title"],
                             "label": f"ランダム・{c['title']}（{len(c['files'])}種）"})
             groups: dict[str, int] = {}
             for f in c["files"]:
                 groups[f["group"]] = groups.get(f["group"], 0) + 1
             for g, n in groups.items():
                 if n >= 2:
-                    randoms.append({"ref": f"random:{c['category']}/{g}",
+                    randoms.append({"ref": f"random:{c['category']}/{g}", "category": c["title"],
                                     "label": f"ランダム・{g}（{n}種）"})
         return {"builtin": builtin, "system": system, "user": user,
                 "effects": effects, "random": randoms}

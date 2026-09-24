@@ -7,6 +7,20 @@
 
   function pad2(n) { return String(n).padStart(2, '0'); }
 
+  /** 検索用に文字をそろえる（全角半角・大文字小文字・カタカナ→ひらがな） */
+  function foldText(s) {
+    return String(s == null ? '' : s).normalize('NFKC').toLowerCase()
+      .replace(/[ァ-ヶ]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0x60); });
+  }
+
+  /** 空白で区切った語が、fields のどこかに全部含まれるか（空の検索は何にでも当たる） */
+  function matchText(q, fields) {
+    var words = foldText(q).split(/\s+/).filter(Boolean);
+    if (!words.length) return true;
+    var hay = foldText((fields || []).join(' '));
+    return words.every(function (w) { return hay.indexOf(w) >= 0; });
+  }
+
   /** Date -> '2026-09-24'（ローカル時刻のまま。UTC にずらさない） */
   function isoDate(d) {
     return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
@@ -351,6 +365,6 @@
     leadLabel: leadLabel, dateRule: dateRule, repeatSummary: repeatSummary, rowTime: rowTime,
     rowLabelParts: rowLabelParts, sortKey: sortKey, inQuiet: inQuiet, quietState: quietState,
     nextNote: nextNote, eventState: eventState, eventsByDate: eventsByDate,
-    pastWarning: pastWarning,
+    pastWarning: pastWarning, foldText: foldText, matchText: matchText,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

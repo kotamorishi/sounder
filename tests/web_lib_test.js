@@ -20,6 +20,14 @@ SL = new Proxy(RAW, {
 
 var NOW = new Date(2026, 8, 24, 1, 30);   // 2026-09-24(木) 01:30
 
+// --- 検索 ---
+eq(SL.foldText('ケッテイ ＡＢＣ'), 'けってい abc', 'foldText カタカナ・全角');
+ok(SL.matchText('', ['何でも']), 'matchText 空の検索');
+ok(SL.matchText('けってい', ['決定ボタンを押す1', 'ケッテイ']), 'matchText ひらがなでカタカナに当たる');
+ok(SL.matchText('ボタン 1', ['決定ボタンを押す1']), 'matchText 複数の語');
+ok(!SL.matchText('ボタン 鳥', ['決定ボタンを押す1']), 'matchText 片方しか無い');
+ok(SL.matchText('ｃｈｉｍｅ', ['Chime']), 'matchText 全角英字');
+
 // --- 日付まわり ---
 eq(SL.pad2(7), '07', 'pad2');
 eq(SL.isoDate(new Date(2026, 0, 5)), '2026-01-05', 'isoDate');

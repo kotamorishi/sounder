@@ -398,8 +398,8 @@ let playingRef = null;
 
 function renderSounds() {
   const box = $('#sound-groups');
-  box.textContent = '';
   box.classList.toggle('is-editing', soundEdit);
+  const { res, q, kind } = searchArea(box, 'sounds', '音を探す（例：チャイム、鳥、決定、雨）', SOUND_CHIPS, renderSounds);
   const hasUser = (state.sounds.user || []).length > 0;
   $('#sound-edit-btn').hidden = !hasUser;
   if (!hasUser && soundEdit) setSoundEdit(false);
@@ -412,16 +412,95 @@ function renderSounds() {
     effects: '効果音ラボ（soundeffect-lab.info）からこの Mac に取ってきた音です。再配布はできません。',
   };
   for (const [title, key] of SOUND_GROUPS) {
-    const items = state.sounds[key] || [];
-    if (!items.length && key !== 'user') continue;
+    if (kind && key !== kind) continue;
+    const items = (state.sounds[key] || []).filter((s) => SL.matchText(q, soundFields(s, title)));
+    if (!items.length && (key !== 'user' || q)) continue;
+    if (key === 'effects' || key === 'random') {
+      const blocks = foldedBlocks(title, items, (s) => soundRow(s, false), q ? () => true : null);
+      blocks[blocks.length - 1].append(el('p', 'footnote', notes[key]));
+      res.append(...blocks);
+      continue;
+    }
     const block = el('section', 'group-block');
     block.append(el('h2', 'group-head', title));
     const group = el('div', 'group');
     for (const s of items) group.append(soundRow(s, key === 'user'));
-    if (key === 'user') group.append(addFileRow());
+    if (key === 'user' && !q) group.append(addFileRow());
     block.append(group, el('p', 'footnote', notes[key]));
-    box.append(block);
+    res.append(block);
   }
+  notFound(res);
+}
+
+// ---------------------------------------------------------------- 一覧の検索・絞り込み
+
+const SOUND_CHIPS = [['', 'すべて'], ['random', 'ランダム'], ['builtin', '内蔵'], ['effects', '効果音ラボ'],
+  ['user', '自分のファイル'], ['system', 'システム']];
+const searchState = {};   // 一覧ごと（'sounds' / 'pick' / 声の一覧の id）の { q, kind }
+
+/** box の先頭に検索欄（と絞り込みボタン）を 1 度だけ作り、結果を入れる場所を返す。
+    入力のたびに rerender() が呼ばれるが、検索欄は作り直さないので文字入力が途切れない */
+function searchArea(box, key, placeholder, chips, rerender) {
+  const st = searchState[key] ||= { q: '', kind: '' };
+  let tools = box.querySelector(':scope > .search-tools');
+  let res = box.querySelector(':scope > .search-results');
+  if (!tools) {
+    box.textContent = '';
+    tools = el('div', 'search-tools');
+    const input = el('input', 'search-input');
+    input.type = 'search';
+    input.placeholder = placeholder;
+    input.value = st.q;
+    input.setAttribute('aria-label', placeholder);
+    input.addEventListener('input', () => { st.q = input.value; rerender(); });
+    tools.append(input);
+    if (chips) {
+      const row = el('div', 'chips');
+      for (const [val, label] of chips) {
+        const b = el('button', null, label);
+        b.type = 'button';
+        b.dataset.kind = val;
+        b.addEventListener('click', () => { st.kind = val; rerender(); });
+        row.append(b);
+      }
+      tools.append(row);
+    }
+    res = el('div', 'search-results');
+    box.append(tools, res);
+  }
+  tools.querySelectorAll('[data-kind]').forEach((b) => b.classList.toggle('is-on', b.dataset.kind === st.kind));
+  res.textContent = '';
+  return { res, q: st.q.trim(), kind: st.kind };
+}
+
+function notFound(res) {
+  if (!res.childElementCount) res.append(el('p', 'footnote search-empty', '見つかりませんでした。別のことばで探してみてください。'));
+}
+
+const soundFields = (s, title) => [s.label, s.sub, s.category, title, s.ref];
+
+/** 効果音・ランダムのように数が多い組は、分類ごとに折りたたむ。open に入っている分類は開いておく */
+function foldedBlocks(title, items, makeRow, open) {
+  const cats = [];
+  const byCat = {};
+  for (const s of items) {
+    const c = s.category || title;
+    if (!byCat[c]) { byCat[c] = []; cats.push(c); }
+    byCat[c].push(s);
+  }
+  return cats.map((c) => {
+    const d = el('details', 'group-block fold');
+    if (open && open(byCat[c])) d.open = true;
+    const sum = el('summary', 'group-head');
+    sum.append(el('span', null, `${title}：${c}`), el('span', 'fold-n', `${byCat[c].length}`));
+    const g = el('div', 'group');
+    // 開いたときに初めて行を作る（数百行を一度に作らない）
+    const fill = () => { if (!g.childElementCount) for (const s of byCat[c]) g.append(makeRow(s)); };
+    if (d.open) fill();
+    d.addEventListener('toggle', () => { if (d.open) fill(); });
+    d.append(sum, g);
+    return d;
+  });
 }
 
 function soundRow(s, deletable) {
@@ -544,34 +623,42 @@ function setMaster(on) {
 }
 
 function renderVoiceList(box, chosen, onPick, firstTitle) {
-  box.textContent = '';
+  box.dataset.chosen = chosen || '';
+  const again = () => renderVoiceList(box, box.dataset.chosen, onPick, firstTitle);
+  const { res, q } = searchArea(box, box.id, '声を探す（例：アナウンサー、女性、英語、Aivis）', null, again);
+  const pick = (value) => { box.dataset.chosen = value; onPick(value); };
+  const hit = (v) => SL.matchText(q, [v.label, v.name, v.locale, v.description,
+    v.locale.startsWith('ja') ? '日本語' : '英語 english',
+    v.name.startsWith('qwen:') ? 'qwen 機械学習' : v.name.startsWith('aivis:') ? 'aivisspeech 機械学習' : 'say 標準']);
   const mk = (title, items) => {
     const block = el('div', 'group-block');
     if (title) block.append(el('h3', 'group-head', title));
     const g = el('div', 'group');
     for (const [value, label, sub] of items) {
-      const cell = checkCell(label, (chosen || '') === value, () => {
+      const cell = checkCell(label, (box.dataset.chosen || '') === value, () => {
         for (const c of box.querySelectorAll('.check-cell')) c.setAttribute('aria-checked', 'false');
         cell.setAttribute('aria-checked', 'true');
-        onPick(value);
+        pick(value);
       }, sub);
       g.append(cell);
     }
     block.append(g);
-    box.append(block);
+    res.append(block);
   };
-  mk(firstTitle || null, [['', 'システム既定']]);
-  const ja = state.voices.filter((v) => v.locale.startsWith('ja'));
-  const other = state.voices.filter((v) => !v.locale.startsWith('ja'));
+  if (!q) mk(firstTitle || null, [['', 'システム既定']]);
+  const ja = state.voices.filter((v) => v.locale.startsWith('ja') && hit(v));
+  const other = state.voices.filter((v) => !v.locale.startsWith('ja') && hit(v));
   if (ja.length) mk('日本語', ja.map((v) => [v.name, v.label || v.name, v.locale]));
   if (other.length) mk('英語', other.map((v) => [v.name, v.label || v.name, v.locale]));
-  if (chosen && !state.voices.some((v) => v.name === chosen)) {
-    mk('見つからない声', [[chosen, chosen, 'この Mac にありません']]);
+  const cur = box.dataset.chosen;
+  if (cur && !q && !state.voices.some((v) => v.name === cur)) {
+    mk('見つからない声', [[cur, cur, 'この Mac にありません']]);
   }
   if (!state.voices.length) {
-    box.append(el('p', 'footnote', 'この環境では読み上げの声の一覧を取得できませんでした。'));
+    res.append(el('p', 'footnote', 'この環境では読み上げの声の一覧を取得できませんでした。'));
   } else {
-    box.append(el('p', 'footnote', 'タップすると選んで、Mac で試聴します。'));
+    notFound(res);
+    res.append(el('p', 'footnote', 'タップすると選んで、Mac で試聴します。'));
   }
 }
 
@@ -1301,7 +1388,7 @@ function renderSkip() {
 let soundTarget = 'main';
 function renderSoundPage() {
   const box = $('#pg-sound-list');
-  box.textContent = '';
+  const { res, q, kind } = searchArea(box, 'pick', '音を探す（例：チャイム、鳥、決定、雨）', SOUND_CHIPS, renderSoundPage);
   const isMain = soundTarget === 'main';
   $('#pg-sound-title').textContent = isMain ? 'サウンド' : '予告のサウンド';
   const chosen = isMain ? (draft._sound ? draft.action.sound : '') : draft.lead_action.sound;
@@ -1330,36 +1417,41 @@ function renderSoundPage() {
     row.addEventListener('click', () => pick(ref));
     return row;
   };
-  if (isMain) {
+  if (isMain && !q && !kind) {
     const block = el('div', 'group-block');
     const g = el('div', 'group');
     g.append(mkRow('', 'なし（読み上げだけ）'));
     block.append(g);
-    box.append(block);
+    res.append(block);
   }
   let known = !chosen;
   for (const [title, key] of SOUND_GROUPS) {
-    const items = state.sounds[key] || [];
+    if ((state.sounds[key] || []).some((s) => s.ref === chosen)) known = true;
+    if (kind && key !== kind) continue;
+    const items = (state.sounds[key] || []).filter((s) => SL.matchText(q, soundFields(s, title)));
     if (!items.length) continue;
+    if (key === 'effects' || key === 'random') {
+      res.append(...foldedBlocks(title, items, (s) => mkRow(s.ref, s.label),
+        (list) => !!q || list.some((s) => s.ref === chosen)));
+      continue;
+    }
     const block = el('div', 'group-block');
     block.append(el('h3', 'group-head', title));
     const g = el('div', 'group');
-    for (const s of items) {
-      if (s.ref === chosen) known = true;
-      g.append(mkRow(s.ref, s.label));
-    }
+    for (const s of items) g.append(mkRow(s.ref, s.label));
     block.append(g);
-    box.append(block);
+    res.append(block);
   }
-  if (!known) {
+  if (!known && !q && !kind) {
     const block = el('div', 'group-block');
     block.append(el('h3', 'group-head', '見つからないサウンド'));
     const g = el('div', 'group');
     g.append(mkRow(chosen, `${chosen}（見つかりません）`));
     block.append(g);
-    box.append(block);
+    res.append(block);
   }
-  box.append(el('p', 'footnote', 'タップすると選んで、Mac で試聴します。'));
+  notFound(res);
+  res.append(el('p', 'footnote', 'タップすると選んで、Mac で試聴します。'));
 }
 
 // --- 子画面: 読み上げ

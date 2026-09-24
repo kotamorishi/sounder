@@ -29,14 +29,36 @@ class TestParse(unittest.TestCase):
     def test_category_of(self):
         self.assertEqual(effects.category_of("https://soundeffect-lab.info/sound/button/"), "button")
         self.assertEqual(effects.category_of("https://soundeffect-lab.info/sound/voice/game.html"),
-                         "game")
+                         "voice")
+        self.assertEqual(effects.category_of("https://soundeffect-lab.info/sound/battle/battle2.html"),
+                         "battle")
+
+    def test_voice_pages_have_an_icon_before_the_title(self):
+        page = ('<h1>声素材 - ゲームの戦闘</h1><ul><li><img src="/x.png" alt=""><span>「よろしく頼む」</span>'
+                '<a href="mp3//game/swordman-greeting1.mp3" download="a.mp3"></a></li></ul>')
+        title, items = effects.parse_page(page)
+        self.assertEqual(title, "声素材")
+        self.assertEqual(items[0]["title"], "「よろしく頼む」")
+
+    def test_sibling_pages_skip_commented_links_and_other_categories(self):
+        page = ('<a href="/sound/battle/battle2.html">2</a><a href="/sound/anime/">x</a>'
+                '<!--<a href="/sound/battle/old.html">old</a>--><a href="/sound/battle/battle2.html">2</a>')
+        self.assertEqual(effects.sibling_pages("https://soundeffect-lab.info/sound/battle/", page),
+                         ["https://soundeffect-lab.info/sound/battle/battle2.html"])
 
     def test_fetch_writes_files_and_manifest(self):
         got = {}
 
+        page2 = ('<h1>ボタン・システム音[2]</h1><ul><li><span>警告音2</span>ブー'
+                 '<a href="mp3/warning2.mp3" download="d.mp3"></a></li></ul>')
+
         def fake_get(url, referer=None):
             got[url] = referer
-            return PAGE.encode() if url.endswith("/button/") else b"ID3mp3"
+            if url.endswith("/button/"):
+                return (PAGE + '<a href="/sound/button/button2.html">2</a>').encode()
+            if url.endswith("button2.html"):
+                return page2.encode()
+            return b"ID3mp3"
 
         orig = effects._get
         effects._get = fake_get
@@ -46,10 +68,11 @@ class TestParse(unittest.TestCase):
             root = Path(tmp)
             n = effects.fetch("https://soundeffect-lab.info/sound/button/", root,
                               out=lambda *a: None, delay=0)
-            self.assertEqual(n, 3)
+            self.assertEqual(n, 4)   # 続きのページ（button2.html）の分も 1 つの分類に
             m = json.loads((root / "button" / "manifest.json").read_text())
+            self.assertEqual(m["title"], "ボタン・システム音")
             self.assertEqual([f["file"] for f in m["files"]],
-                             ["decision1.mp3", "decision2.mp3", "warning1.mp3"])
+                             ["decision1.mp3", "decision2.mp3", "warning1.mp3", "warning2.mp3"])
             # 取得済みは取り直さない
             self.assertEqual(effects.fetch("https://soundeffect-lab.info/sound/button/", root,
                                            out=lambda *a: None, delay=0), 0)
