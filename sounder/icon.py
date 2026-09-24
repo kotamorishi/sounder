@@ -134,9 +134,11 @@ def _png(width: int, height: int, rows: list[bytes]) -> bytes:
             + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
 
 
-# ホーム画面用は不透明（iOS は透過を黒く塗るため）。ブラウザのタブ用だけ背景を透過する
-SIZES = ((180, "icon-180.png", False), (512, "icon-512.png", False),
-         (192, "icon-192.png", False))
+# iPhone のホーム画面用（apple-touch-icon）は不透明（iOS は透過を黒く塗るため）。
+# PWA の manifest 用（192 / 512）は角の外を透過し、Android 用に角のない maskable も作る。
+SIZES = ((180, "icon-180.png", False), (512, "icon-512.png", True),
+         (192, "icon-192.png", True))
+MASKABLE = (512, "icon-maskable-512.png")
 FAVICON = (64, "favicon.png")
 
 
@@ -147,7 +149,9 @@ def main(argv: list[str] | None = None) -> int:
     for size, name, transparent in SIZES:
         (dest / name).write_bytes(render(size, transparent=transparent))
     (dest / FAVICON[1]).write_bytes(render_glyph(FAVICON[0]))
-    print("作成:", "、".join([name for _s, name, _t in SIZES] + [FAVICON[1]]))
+    # maskable は端まで背景色で塗る（丸や角丸に切り抜くのは Android 側）
+    (dest / MASKABLE[1]).write_bytes(render(MASKABLE[0], radius=0.0))
+    print("作成:", "、".join([name for _s, name, _t in SIZES] + [FAVICON[1], MASKABLE[1]]))
     return 0
 
 

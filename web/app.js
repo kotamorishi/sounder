@@ -1934,3 +1934,8 @@ refresh();
 startPolling();
 // 「あと○分」と現在線は、通信を待たずに 15 秒ごとに描き直す
 setInterval(() => { renderBanner(); tickTimeline(); }, 15000);
+
+// HTTPS（Tailscale など）で開いたときは PWA としてサービスワーカーを入れる（http の LAN 直では使えない）
+if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register('/sw.js').catch(() => { /* 入らなくても普通に使える */ });
+}

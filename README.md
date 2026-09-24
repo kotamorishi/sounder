@@ -215,6 +215,24 @@ macOS がスリープ中は何も鳴りません。常に鳴らしたいなら�
 - 予定の少し前に起こす: `sudo pmset repeat wakeorpoweron MTWRF 08:00:00`
 - 常時起こしておく: `caffeinate -s`（開発中の手元確認向け）
 
+## Tailscale で HTTPS にして、アプリ（PWA）として使う
+
+Mac mini が [Tailscale](https://tailscale.com/) に参加していれば、`tailscale serve` で
+**tailnet の中だけに** HTTPS で公開できます（インターネットには出ません）。
+
+```sh
+/Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=443 http://127.0.0.1:8777
+# → https://<Mac の名前>.<tailnet>.ts.net/ 　止めるときは同じコマンドの最後を "off" に
+```
+
+- スマホにも Tailscale を入れて同じアカウントでログインし、`https://…ts.net/?t=<合言葉>` を開きます。
+- 共有メニューの「ホーム画面に追加」（Android の Chrome は「アプリをインストール」）で、
+  アドレスバーのない **アプリ（PWA）** になります。HTTPS なので、サービスワーカーも入ります。
+  - 画面のファイルは毎回 Mac から取り、つながらないときだけ前回の画面を出します。
+    予定や設定などのデータは取っておきません。
+- 家の外からでも、Tailscale がつながっていれば使えます。
+- iPhone のホーム画面から開いたアプリはブラウザと Cookie が別なので、最初の 1 回だけ合言葉を聞かれます。
+
 ## 同じ LAN のスマホから開きたいとき
 
 既定ではローカルのみです。あえて公開する場合は合言葉を付けてください。
@@ -253,6 +271,7 @@ web/               画面（外部CDNなし）
   lib.js           日付や表示文字列の純関数（テスト対象）
   app.js           画面の組み立てとサーバとのやりとり
   unlock.html      合言葉の入力画面
+  sw.js            サービスワーカー（HTTPS で開いたときの PWA 用）
   icon-*.png       ホーム画面用のアイコン（sounder/icon.py で生成）
   fonts/           同梱の M PLUS Rounded 1c（woff2）とライセンス（OFL.txt）
 tts/qwen_server.py Qwen3-TTS を常駐させる小さなサーバ（.venv-tts/ で動く）
