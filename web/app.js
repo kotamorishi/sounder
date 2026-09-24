@@ -612,6 +612,7 @@ function renderSettings() {
   $('#quiet-desc').textContent = SL.describeQuiet(q);
   $('#set-voice-val').textContent = voiceLabel(st.default_voice) || 'システム既定';
   renderDesigned();
+  renderCalendarSettings();
   const neural = state.voices.filter((v) => 'asleep' in v);
   $('#tts-idle-block').hidden = !neural.length;
   const idle = String(st.tts_idle_minutes ?? 30);
@@ -934,6 +935,8 @@ function tlCard(e, leads, sched) {
     const a = sched.action || {};
     const parts = a.type === 'both' ? [soundLabel(a.sound), `＋「${a.text || ''}」`] : whatParts(a);
     b.append(phrased('span', 'tl-card-sub', parts));
+  } else if (e.source === 'calendar') {
+    b.append(phrased('span', 'tl-card-sub', [`カレンダー「${e.calendar || ''}」`, ` · ${e.starts} 開始`]));
   }
   if (leads.length) {
     const pills = el('div', 'tl-pills');
@@ -1153,6 +1156,53 @@ async function makeVoice() {
     btn.disabled = false;
     btn.textContent = 'この説明で声を作る';
   }
+}
+
+// --- カレンダー連携
+const CAL_LEADS = [0, 5, 10, 15, 30, 60].map((m) => ({ value: String(m), label: m ? `開始の${m}分前` : '開始時刻' }));
+const CAL_DEFAULTS = { enabled: false, calendars: [], lead: 10, sound: 'builtin:melody_notice', voice: '' };
+
+function saveCalendar(patch, msg) {
+  const cur = Object.assign({}, CAL_DEFAULTS, state.settings.calendar || {});
+  return saveSettings({ calendar: Object.assign(cur, patch) }, msg);
+}
+
+function renderCalendarSettings() {
+  const feed = state.calendar_feed || {};
+  const cfg = Object.assign({}, CAL_DEFAULTS, state.settings.calendar || {});
+  const ready = feed.installed && feed.status === 'authorized';
+  $('#cal-controls').hidden = $('#cal-list-head').hidden = $('#cal-list').hidden = !ready;
+  if (!feed.installed) {
+    $('#cal-desc').textContent = 'Mac のカレンダー（iCloud の共有カレンダーも）の予定を読み上げられます。'
+      + '使うには Mac mini で scripts/install-calendar.sh を実行して、カレンダーへのアクセスを許可してください。';
+    return;
+  }
+  if (!ready) {
+    $('#cal-desc').textContent = 'カレンダーへのアクセスが許可されていません。Mac のシステム設定 → プライバシーとセキュリティ → '
+      + 'カレンダー で「sounder カレンダー連携」をオンにしてください。';
+    return;
+  }
+  setSwitch($('#cal-enabled'), !!cfg.enabled);
+  fillSelect($('#cal-lead'), CAL_LEADS, String(cfg.lead));
+  const sounds = [{ value: '', label: 'なし（読み上げだけ）' }]
+    .concat((state.sounds.builtin || []).map((s) => ({ value: s.ref, label: s.label })))
+    .concat((state.sounds.random || []).map((s) => ({ value: s.ref, label: s.label })));
+  fillSelect($('#cal-sound'), sounds, cfg.sound || '');
+  if (!cfg.sound) $('#cal-sound').value = '';
+  const box = $('#cal-list');
+  box.textContent = '';
+  for (const c of feed.calendars || []) {
+    box.append(checkCell(c.title, cfg.calendars.includes(c.id), () => {
+      const set = new Set(cfg.calendars);
+      set.has(c.id) ? set.delete(c.id) : set.add(c.id);
+      saveCalendar({ calendars: (feed.calendars || []).map((x) => x.id).filter((id) => set.has(id)) }, '保存しました');
+    }, c.source));
+  }
+  const when = feed.generated ? SL.fmtWhen(feed.generated.slice(0, 19)) : '—';
+  const lead = Number(cfg.lead);
+  $('#cal-desc').textContent = `例：「${lead ? `${lead}分後に、算数があります。` : '算数の時間です。'}」 `
+    + `声は既定の声（${voiceLabel(state.settings.default_voice) || 'システム既定'}）で読みます。終日の予定は読みません。`
+    + `禁止時間と「すべての予定を鳴らす」の設定にも従います。予定は 5 分ごとに Mac のカレンダーから読み直します（最終 ${when}）。`;
 }
 
 const TTS_IDLE_OPTIONS = [['0', '休ませない'], ['10', '10分使わなかったら'], ['30', '30分使わなかったら'],
@@ -1798,6 +1848,16 @@ function wire() {
       .then(() => toast('再生しました')).catch(fail);
   });
   $('#set-rate').addEventListener('input', (e) => { $('#rate-out').textContent = e.target.value; setRangeFill(e.target); });
+  $('#cal-enabled').addEventListener('click', () => {
+    const on = !isOn($('#cal-enabled'));
+    setSwitch($('#cal-enabled'), on);
+    saveCalendar({ enabled: on }, on ? 'カレンダーの読み上げをオンにしました' : 'カレンダーの読み上げをオフにしました');
+  });
+  $('#cal-lead').addEventListener('change', (e) => saveCalendar({ lead: Number(e.target.value) }, '保存しました'));
+  $('#cal-sound').addEventListener('change', (e) => {
+    saveCalendar({ sound: e.target.value }, '保存しました');
+    if (e.target.value) preview(e.target.value);
+  });
   $('#set-tts-idle').addEventListener('change', (e) => saveSettings({ tts_idle_minutes: Number(e.target.value) }, '保存しました'));
   $('#set-rate').addEventListener('change', (e) => {
     saveSettings({ speak_rate: Number(e.target.value) }, '速さを保存しました');

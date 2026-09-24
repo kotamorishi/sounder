@@ -148,6 +148,27 @@
       <p class="footnote" id="tts-idle-desc"></p>
     </div>
 
+    <div class="group-block" id="cal-block">
+      <h2 class="group-head">カレンダー連携</h2>
+      <div class="group" id="cal-controls">
+        <div class="cell">
+          <span class="cell-label" id="cal-on-label">カレンダーの予定を読み上げる</span>
+          <button type="button" class="switch" id="cal-enabled" role="switch" aria-checked="false" aria-labelledby="cal-on-label"></button>
+        </div>
+        <label class="cell">
+          <span class="cell-label">読み上げるとき</span>
+          <select class="cell-input cell-select" id="cal-lead"></select>
+        </label>
+        <label class="cell">
+          <span class="cell-label">前に鳴らす音</span>
+          <select class="cell-input cell-select" id="cal-sound"></select>
+        </label>
+      </div>
+      <h3 class="group-head" id="cal-list-head">読み上げるカレンダー</h3>
+      <div class="group" id="cal-list"></div>
+      <p class="footnote" id="cal-desc"></p>
+    </div>
+
     <div class="group-block">
       <h2 class="group-head">禁止時間</h2>
       <div class="group">

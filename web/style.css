@@ -1157,3 +1157,6 @@ details.fold:not([open]) { margin-bottom: 4px; }
 }
 .chips button.is-on { background: var(--accent); color: #fff; }
 .search-empty { text-align: center; padding: 16px 0; }
+
+/* カレンダー連携: 見出しと上の組のあいだ */
+#cal-list-head { margin-top: 22px; }

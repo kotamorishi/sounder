@@ -21,7 +21,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import scheduler as sched_mod
-from . import daysoff, neural, tones
+from . import calendarfeed, daysoff, neural, tones
 from .config import Store, ValidationError
 from .eventlog import EventLog
 from .player import Player, SoundNotFound
@@ -66,7 +66,8 @@ class App:
                              speech_cache=SpeechCache(cache))
         # 保存時にサウンドの存在を確かめる（鳴らす瞬間に気づくのでは遅い）
         self.store = Store(home / "data" / "config.json", sound_check=self.player.resolve)
-        self.scheduler = Scheduler(self.store, self.player, self.log)
+        self.calendar = calendarfeed.CalendarFeed(home / "data" / "calendar.json")
+        self.scheduler = Scheduler(self.store, self.player, self.log, feed=self.calendar)
         self.token = token
         self.started_at = datetime.now()
         self._pick_default_voice()
@@ -269,7 +270,7 @@ class Handler(BaseHTTPRequestHandler):
                 "now": datetime.now().isoformat(timespec="seconds"),
                 "playing": app.player.is_playing(),
                 "next_events": sched_mod.next_events(
-                    app.store.schedules(), limit=6, settings=app.store.settings),
+                    app.scheduler.all_schedules(), limit=6, settings=app.store.settings),
                 "log": app.log.recent(25),
             })
             return
@@ -287,7 +288,7 @@ class Handler(BaseHTTPRequestHandler):
                 "master_enabled": settings.get("master_enabled", True),
                 "quiet_hours": settings.get("quiet_hours"),
                 "days": sched_mod.calendar_days(
-                    app.store.schedules(), first, span, settings=settings,
+                    app.scheduler.all_schedules(settings), first, span, settings=settings,
                     log_entries=app.log.recent(300)),
             })
             return
@@ -451,8 +452,9 @@ class Handler(BaseHTTPRequestHandler):
             "sounds": app.player.library(),
             "voices": app.player.voices(),
             "calendars": daysoff.catalog(),
+            "calendar_feed": app.calendar.status(),
             "next_events": sched_mod.next_events(
-                app.store.schedules(), limit=6, settings=app.store.settings),
+                app.scheduler.all_schedules(), limit=6, settings=app.store.settings),
             "log": app.log.recent(30),
             "playing": app.player.is_playing(),
             "host": f"{self.headers.get('Host')}",

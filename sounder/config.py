@@ -12,7 +12,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from . import daysoff
+from . import calendarfeed, daysoff
 
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -208,6 +208,22 @@ def validate_settings(raw: Any, current: dict[str, Any]) -> dict[str, Any]:
         out["default_voice"] = (raw["default_voice"] or "").strip()[:80]
     if "speak_rate" in raw:
         out["speak_rate"] = _int_in(raw["speak_rate"], 90, 400, "話す速さ", current["speak_rate"])
+    if "calendar" in raw:
+        c = raw["calendar"] or {}
+        if not isinstance(c, dict):
+            raise ValidationError("カレンダー連携の設定が不正です")
+        cur = {**calendarfeed.DEFAULTS, **(current.get("calendar") or {})}
+        cals = c.get("calendars", cur["calendars"])
+        if not isinstance(cals, list) or len(cals) > 100 or not all(isinstance(x, str) for x in cals):
+            raise ValidationError("カレンダーの指定が不正です")
+        lead = _int_in(c.get("lead", cur["lead"]), 0, 120, "何分前に読み上げるか")
+        out["calendar"] = {
+            "enabled": bool(c.get("enabled", cur["enabled"])),
+            "calendars": [x[:200] for x in dict.fromkeys(cals)],
+            "lead": lead,
+            "sound": (c.get("sound", cur["sound"]) or "").strip()[:300],
+            "voice": (c.get("voice", cur["voice"]) or "").strip()[:80],
+        }
     if "tts_idle_minutes" in raw:
         out["tts_idle_minutes"] = _int_in(raw["tts_idle_minutes"], 0, 1440, "休ませるまでの時間",
                                           current["tts_idle_minutes"])

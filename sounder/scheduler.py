@@ -200,6 +200,9 @@ def calendar_days(schedules: list[dict], start: date, days: int,
                     "past": when <= now,
                     "result": outcome(s, when, tag, lead, log_entries) if when <= now else None,
                     "off": off,
+                    "source": s.get("source"),
+                    "calendar": s.get("calendar"),
+                    "starts": s.get("starts"),
                 })
         events.sort(key=lambda e: e["at"])
         out.append({
@@ -289,8 +292,10 @@ def describe_day_of_month(day, *, bare: bool = False) -> str:
 class Scheduler:
     """1 秒ごとに時計を見て、その間に来た発火時刻を鳴らす。"""
 
-    def __init__(self, store, player, log, *, grace: float = DEFAULT_GRACE) -> None:
+    def __init__(self, store, player, log, *, grace: float = DEFAULT_GRACE, feed=None) -> None:
         self.store = store
+        # カレンダー連携（calendarfeed.CalendarFeed）。予定を 1 回きりの予定として足す
+        self.feed = feed
         self.player = player
         self.log = log
         self.grace = grace
@@ -320,12 +325,17 @@ class Scheduler:
                 self.log("error", f"スケジューラでエラーが発生しました: {exc!r}")
             self._stop.wait(1.0)
 
+    def all_schedules(self, settings: dict | None = None) -> list[dict]:
+        """保存してある予定 ＋ カレンダー連携の予定。"""
+        extra = self.feed.schedules(settings or self.store.settings) if self.feed else []
+        return self.store.schedules() + extra
+
     def tick(self, now: datetime) -> None:
         lo, self._last_tick = self._last_tick, now
         if now < lo:  # 時計が巻き戻った（手動変更・夏時間）
             lo = now - timedelta(seconds=1)
         settings = self.store.settings
-        for sched in self.store.schedules():
+        for sched in self.all_schedules(settings):
             if not sched.get("enabled"):
                 continue
             for when, tag, lead in events_between(sched, lo, now):
@@ -350,7 +360,7 @@ class Scheduler:
         if prefetch is None:
             return
         hi = now + timedelta(seconds=PREFETCH_AHEAD)
-        for sched in self.store.schedules():
+        for sched in self.all_schedules(settings):
             if not sched.get("enabled"):
                 continue
             for when, tag, lead in events_between(sched, now, hi):
@@ -365,6 +375,8 @@ class Scheduler:
     def _fire(self, sched: dict, when: datetime, tag: str, lead: int, now, settings) -> None:
         name = sched["name"]
         label = f"{name}（{lead}分前の予告）" if tag == "lead" else name
+        if sched.get("source") == "calendar":
+            label = f"カレンダー: {name}"
         behind = (now - when).total_seconds()
 
         if behind > self.grace:
@@ -380,8 +392,10 @@ class Scheduler:
 
         action = self.action_for(sched, tag, lead, settings)
         self.log("fired", f"{label} を再生しました", schedule_id=sched["id"])
-        self.store.mark_fired(sched["id"], when)
         self.player.play(action, settings=settings, label=label, queue=True)
+        if sched.get("source") == "calendar":
+            return  # 保存していない予定なので、前回の記録も単発のオフもない
+        self.store.mark_fired(sched["id"], when)
 
         if sched["kind"] == "once" and tag == "main":
             try:

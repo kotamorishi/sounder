@@ -260,6 +260,7 @@ sounder/           アプリ本体
   neural.py        Qwen3-TTS・AivisSpeech への橋渡しと音声のキャッシュ
   effects.py       効果音ラボの音を取ってくる
   speechcache.py   読み上げの取り置き（30 日で消す）
+  calendarfeed.py  カレンダーの予定を読み上げの予定にする
   daysoff.py       お休みの日の暦（オンタリオ州の祝日の計算・TDSB の休校日）
   scheduler.py     いつ鳴らすかの計算と 1 秒ごとの判定
   eventlog.py      実行ログ
@@ -275,12 +276,14 @@ web/               画面（外部CDNなし）
   icon-*.png       ホーム画面用のアイコン（sounder/icon.py で生成）
   fonts/           同梱の M PLUS Rounded 1c（woff2）とライセンス（OFL.txt）
 tts/qwen_server.py Qwen3-TTS を常駐させる小さなサーバ（.venv-tts/ で動く）
+tools/calendar/    カレンダー連携の補助アプリ（Swift・EventKit）
 sounds/builtin/    自動生成されるチャイム
 sounds/user/       アップロードした音
 sounds/effects/    効果音ラボから取ってきた音（git には入れない）
 data/config.json   予定と設定（これだけバックアップすれば復元できます）
 data/events.log    実行ログ
 data/tts-cache/    読み上げの取り置き（30 日使われなければ消える。消してもかまいません）
+data/calendar.json 補助アプリが書き出したこれからの予定
 data/voices/       言葉で説明して作った声（Qwen3-TTS の見本の声）
 tests/             テスト一式
   ui/              画面を PNG に撮って目視確認するための道具
@@ -331,19 +334,18 @@ curl -X POST http://127.0.0.1:8777/api/preview \
   -d '{"type":"sound","sound":"builtin:doorbell","volume":0.6}'
 ```
 
-## この先: iCloud カレンダーの取り込み
+## カレンダーの予定を読み上げる（iCloud の共有カレンダーも）
 
-外部に接続せずに実現できます。iCloud の予定はすでに Mac の Calendar.app に
-同期されているので、**ネットワークではなくローカルの Calendar.app を読む**のが筋の良い方法です。
+Mac のカレンダー.app に出ている予定（iCloud の共有カレンダー、購読カレンダー、Mac に追加した Google など）を、
+開始の N 分前に読み上げます。予定は Mac の中で読むだけで、Apple ID のパスワードも外部との通信も使いません。
 
 ```sh
-osascript -e 'tell application "Calendar" to get summary of every event of calendar "予定" \
-  whose start date > (current date)'
+scripts/install-calendar.sh   # 補助アプリ SounderCalendar.app を作り、5 分ごとに予定を data/calendar.json へ書き出す
 ```
 
-この方式なら Apple ID のパスワードもアプリ用パスワードも不要で、外部通信も発生しません
-（初回に「カレンダーへのアクセス」の許可ダイアログが一度出ます。この許可まわりは
-実装するときに実機で確かめます）。「カレンダー名を指定して取り込み、予定の N 分前に
-チャイムを鳴らす」という形なら、いまの「事前の予告」の仕組みをそのまま流用できます。
-CalDAV で直接 iCloud を見に行く方法もありますが、そちらは通信とアプリ用パスワードが
-必要になるので、ローカルの Calendar.app を読む方を勧めます。
+- 初回は Mac の画面に「“sounder カレンダー連携”がカレンダーへのアクセスを求めています」と出るので
+  「フルアクセスを許可」を押します（あとから システム設定 → プライバシーとセキュリティ → カレンダー で変更可）。
+- 設定タブの「カレンダー連携」で、オン／オフ、読み上げるカレンダー、何分前に読むか（開始時刻・5〜60 分前）、
+  前に鳴らす音を選びます。声は既定の声です。例：「10分後に、算数があります。」
+- 終日の予定は読みません。禁止時間と「すべての予定を鳴らす」の設定に従います。タイムラインにも出ます。
+- Python から直接カレンダーを読むと許可が Python 全体に付いてしまうので、許可を持つのは小さな補助アプリだけにしています。
