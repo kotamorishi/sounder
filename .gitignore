@@ -7,3 +7,6 @@ __pycache__/
 *.pyc
 .DS_Store
 .venv-tts/
+
+# 効果音ラボの音（再配布禁止なので入れない。python3 -m sounder.effects で取ってくる）
+sounds/effects/

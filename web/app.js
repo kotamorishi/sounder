@@ -4,7 +4,8 @@
 
 const DAY_NAMES = ['月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日', '日曜日'];
 const LEAD_CHOICES = [1, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120];
-const SOUND_GROUPS = [['内蔵', 'builtin'], ['自分のファイル', 'user'], ['システム', 'system']];
+const SOUND_GROUPS = [['ランダム', 'random'], ['内蔵', 'builtin'], ['効果音ラボ', 'effects'],
+  ['自分のファイル', 'user'], ['システム', 'system']];
 const LOG_LABELS = { fired: '再生', error: 'エラー', missed: '取りこぼし', skipped: 'スキップ', test: '試聴', info: '情報' };
 const VIEWS = ['schedules', 'timeline', 'sounds', 'settings'];
 // 以前の画面のハッシュも受け付ける（ブックマーク用）
@@ -212,7 +213,7 @@ function fmtTs(ts) {
 
 function soundLabel(ref) {
   if (!ref) return '—';
-  for (const group of ['builtin', 'user', 'system']) {
+  for (const group of ['random', 'builtin', 'effects', 'user', 'system']) {
     const hit = (state.sounds[group] || []).find((s) => s.ref === ref);
     if (hit) return hit.label;
   }
@@ -407,6 +408,8 @@ function renderSounds() {
     builtin: 'この Mac の中で生成した音です。タップで試聴できます。',
     user: 'mp3 / m4a / wav / aiff など（30MB まで）。外部には送信しません。',
     system: 'macOS に入っている効果音です。',
+    random: '鳴らすたびに、その中から 1 つを選んで鳴らします。タップで試聴（毎回ちがう音）。',
+    effects: '効果音ラボ（soundeffect-lab.info）からこの Mac に取ってきた音です。再配布はできません。',
   };
   for (const [title, key] of SOUND_GROUPS) {
     const items = state.sounds[key] || [];
@@ -441,6 +444,7 @@ function soundRow(s, deletable) {
   const dot = el('span', 'play-dot');
   dot.append(icon(playing ? 'stop' : 'play', 14));
   play.append(dot, el('span', 'name', s.label));
+  if (s.sub) play.title = s.sub;
   play.addEventListener('click', () => {
     if (playingRef === s.ref) stopSound();
     else preview(s.ref);

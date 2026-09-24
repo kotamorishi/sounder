@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import random
 import re
 from collections import deque
 import shutil
@@ -39,8 +41,11 @@ class Player:
     """
 
     def __init__(self, builtin_dir: Path, user_dir: Path, *, log=None,
-                 tts: list | None = None, speech_cache: SpeechCache | None = None) -> None:
+                 tts: list | None = None, speech_cache: SpeechCache | None = None,
+                 effects_dir: Path | None = None) -> None:
         self.builtin_dir = builtin_dir
+        # 効果音ラボから取ってきた音（python3 -m sounder.effects）。sounds/effects/<分類>/
+        self.effects_dir = effects_dir or builtin_dir.parent / "effects"
         self.user_dir = user_dir
         self._log = log or (lambda *a, **k: None)
         self._lock = threading.Lock()
@@ -88,12 +93,50 @@ class Player:
                 if p.is_file():
                     return p
             raise SoundNotFound(f"システムサウンド {name!r} がありません")
+        if scheme == "effect":
+            cat, _, fname = name.partition("/")
+            if not (SAFE_NAME.match(cat) and SAFE_NAME.match(fname or "")):
+                raise SoundNotFound("ファイル名が不正です")
+            path = (self.effects_dir / cat / fname).resolve()
+            if self.effects_dir.resolve() not in path.parents or not path.is_file():
+                raise SoundNotFound(f"効果音 {name!r} がありません（python3 -m sounder.effects で取得）")
+            return path
+        if scheme == "random":
+            # "random:button" は分類の全部から、"random:button/決定ボタンを押す" はその組から選ぶ
+            cat, _, group = name.partition("/")
+            pool = [self.effects_dir / c["category"] / f["file"]
+                    for c in self._effect_categories() if c["category"] == cat
+                    for f in c["files"] if not group or f["group"] == group]
+            if not pool:
+                raise SoundNotFound(f"ランダムに選べる効果音がありません: {name}")
+            return random.choice(pool)
         if scheme == "file":
             path = Path(name).expanduser()
             if not path.is_absolute() or not path.is_file():
                 raise SoundNotFound(f"ファイルが見つかりません: {name}")
             return path
         raise SoundNotFound(f"未知のサウンド指定です: {ref}")
+
+    def _effect_categories(self) -> list[dict]:
+        """取ってきた効果音を分類ごとに。ファイルが実際にあるものだけ。"""
+        out = []
+        if not self.effects_dir.is_dir():
+            return out
+        for manifest in sorted(self.effects_dir.glob("*/manifest.json")):
+            try:
+                m = json.loads(manifest.read_text("utf-8"))
+            except (OSError, ValueError):
+                continue
+            cat = manifest.parent.name
+            files = []
+            for f in m.get("files") or []:
+                if SAFE_NAME.match(f.get("file") or "") and (manifest.parent / f["file"]).is_file():
+                    title = f.get("title") or f["file"]
+                    files.append({"file": f["file"], "title": title, "desc": f.get("desc") or "",
+                                  "group": re.sub(r"\d+$", "", title).strip() or title})
+            if files:
+                out.append({"category": cat, "title": m.get("title") or cat, "files": files})
+        return out
 
     def library(self) -> dict[str, list[dict]]:
         """Web UI に出すサウンド一覧。"""
@@ -121,7 +164,22 @@ class Player:
                         "label": p.name,
                         "size": p.stat().st_size,
                     })
-        return {"builtin": builtin, "system": system, "user": user}
+        effects, randoms = [], []
+        for c in self._effect_categories():
+            for f in c["files"]:
+                effects.append({"ref": f"effect:{c['category']}/{f['file']}", "label": f["title"],
+                                "sub": f["desc"], "category": c["title"]})
+            randoms.append({"ref": f"random:{c['category']}",
+                            "label": f"ランダム・{c['title']}（{len(c['files'])}種）"})
+            groups: dict[str, int] = {}
+            for f in c["files"]:
+                groups[f["group"]] = groups.get(f["group"], 0) + 1
+            for g, n in groups.items():
+                if n >= 2:
+                    randoms.append({"ref": f"random:{c['category']}/{g}",
+                                    "label": f"ランダム・{g}（{n}種）"})
+        return {"builtin": builtin, "system": system, "user": user,
+                "effects": effects, "random": randoms}
 
     def voices(self) -> list[dict]:
         """読み上げに使える声（日本語と英語だけ）。機械学習の声（動いていれば）を先に、次に say の声。"""

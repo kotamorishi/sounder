@@ -110,6 +110,21 @@ iPhone の Safari で使うことを基準にした、iOS の時計アプリに�
   [機械学習の声](#もっと自然な声qwen3-tts) を入れると、そちらも選べます
 - **両方** … チャイムのあとに読み上げ
 
+### 効果音（効果音ラボ）とランダム再生
+
+[効果音ラボ](https://soundeffect-lab.info/) の効果音を、この Mac に取ってきて使えます。
+**再配布が禁止されているのでリポジトリには入っていません。** 各自の Mac で取ってきてください。
+
+```sh
+python3 -m sounder.effects                                      # ボタン・システム音（103 種）
+python3 -m sounder.effects https://soundeffect-lab.info/sound/anime/   # ほかの分類も URL を渡せば同じように
+```
+
+- `sounds/effects/<分類>/` に mp3 と一覧（manifest.json）が入り、サウンドの一覧に「効果音ラボ」として出ます。
+- サウンドの一覧の **「ランダム」** を選ぶと、鳴らすたびにその中から 1 つを選んで鳴らします。
+  分類ぜんぶ（例: ボタン・システム音 103 種）か、似た音の組（例: 決定ボタンを押す 53 種）から選べます。
+- 取得は 1 秒に 1 ファイルずつ。取得済みのものは取り直しません。
+
 ### 内蔵サウンド
 
 ピンポーン、時報（ウェストミンスター）、朝のメロディー、カッコウ、アラームなど 14 種類を
@@ -222,6 +237,8 @@ sounder/           アプリ本体
   config.py        設定ファイルの読み書きと入力検証
   player.py        afplay / say の呼び出し
   neural.py        Qwen3-TTS・AivisSpeech への橋渡しと音声のキャッシュ
+  effects.py       効果音ラボの音を取ってくる
+  speechcache.py   読み上げの取り置き（30 日で消す）
   daysoff.py       お休みの日の暦（オンタリオ州の祝日の計算・TDSB の休校日）
   scheduler.py     いつ鳴らすかの計算と 1 秒ごとの判定
   eventlog.py      実行ログ
@@ -238,6 +255,7 @@ web/               画面（外部CDNなし）
 tts/qwen_server.py Qwen3-TTS を常駐させる小さなサーバ（.venv-tts/ で動く）
 sounds/builtin/    自動生成されるチャイム
 sounds/user/       アップロードした音
+sounds/effects/    効果音ラボから取ってきた音（git には入れない）
 data/config.json   予定と設定（これだけバックアップすれば復元できます）
 data/events.log    実行ログ
 data/tts-cache/    読み上げの取り置き（30 日使われなければ消える。消してもかまいません）
