@@ -206,7 +206,13 @@ class _Engine:
 
 
 class NeuralTTS(_Engine):
-    """Qwen3-TTS（tts/qwen_server.py）。話す速さは変えられない。"""
+    """Qwen3-TTS（tts/qwen_server.py）。話す速さは変えられない。
+
+    声の名前:
+      qwen:ono_anna            用意された話者（ふつうの話し方）
+      qwen:ono_anna@announcer  同じ話者でアナウンサー風に
+      qwen:design:<id>         言葉で説明して作った声
+    """
 
     prefix = PREFIX
     title = "Qwen3-TTS"
@@ -217,19 +223,68 @@ class NeuralTTS(_Engine):
         super().__init__(cache_dir, url=url, log=log)
 
     def _fetch_voices(self) -> list[dict]:
-        speakers = self._get_json("/speakers").get("speakers") or []
-        out = [{"name": PREFIX + s, "label": label_of(s), "locale": LOCALES.get(s, "zh_CN")}
-               for s in speakers]
-        out.sort(key=lambda v: (not v["locale"].startswith("ja"), v["name"]))
-        return out
+        data = self._get_json("/speakers")
+        out = []
+        for d in data.get("designed") or []:
+            out.append({"name": f"{PREFIX}design:{d['id']}",
+                        "label": f"{d['name']}（Qwen3-TTS・作った声）",
+                        "locale": "en_US" if d.get("language") == "english" else "ja_JP",
+                        "designed": True, "description": d.get("description") or ""})
+        presets = []
+        for sp in data.get("speakers") or []:
+            locale = LOCALES.get(sp, "zh_CN")
+            presets.append({"name": PREFIX + sp, "label": label_of(sp), "locale": locale})
+            if "announcer" in (data.get("styles") or []):
+                presets.append({"name": f"{PREFIX}{sp}@announcer",
+                                "label": label_of(sp).replace("（", "・アナウンサー風（"),
+                                "locale": locale})
+        presets.sort(key=lambda v: (not v["locale"].startswith("ja"), v["name"]))
+        return out + presets
 
     def _synthesize(self, text: str, voice: str, rate: int | None) -> bytes:
-        body = json.dumps({"text": text, "speaker": voice[len(PREFIX):],
+        speaker, _, style = voice[len(PREFIX):].partition("@")
+        body = json.dumps({"text": text, "speaker": speaker, "style": style,
                            "language": language_of(text)}).encode()
         req = urllib.request.Request(f"{self.url}/synthesize", data=body,
                                      headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=120) as r:
+        with urllib.request.urlopen(req, timeout=180) as r:
             return r.read()
+
+    # --- 言葉で説明して声を作る --------------------------------------------
+
+    def design(self, name: str, description: str, language: str = "japanese") -> dict:
+        """声を作って、その声の一覧用の情報を返す。失敗したら ValueError。"""
+        self.last_used = time.monotonic()
+        if not self.ensure_up():
+            raise ValueError("Qwen3-TTS が動いていません")
+        body = json.dumps({"name": name, "description": description,
+                           "language": language}).encode()
+        req = urllib.request.Request(f"{self.url}/design", data=body,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=600) as r:
+                made = json.load(r)
+        except urllib.error.HTTPError as exc:
+            raise ValueError(exc.read().decode("utf-8", "replace")[:200]) from None
+        except OSError as exc:
+            raise ValueError(f"Qwen3-TTS に接続できません（{exc}）") from None
+        self.last_used = time.monotonic()
+        self.voices()  # 一覧を覚え直す
+        return {"name": f"{PREFIX}design:{made['id']}",
+                "label": f"{made['name']}（Qwen3-TTS・作った声）"}
+
+    def delete_design(self, vid: str) -> bool:
+        if not self.ensure_up():
+            return False
+        req = urllib.request.Request(f"{self.url}/design/{urllib.parse.quote(vid)}",
+                                     method="DELETE")
+        try:
+            with urllib.request.urlopen(req, timeout=30):
+                pass
+        except OSError:
+            return False
+        self.voices()
+        return True
 
 
 class AivisTTS(_Engine):

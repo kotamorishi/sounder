@@ -282,6 +282,17 @@ input[type="time"].cell-input, input[type="date"].cell-input { min-width: 96px; 
 .check-cell .check { color: var(--accent); visibility: hidden; }
 .check-cell[aria-checked="true"] .check { visibility: visible; }
 .check-cell .cell-sub { color: var(--ink-2); font-size: 13px; }
+#designed-list .cell-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+#designed-list .cell-sub { color: var(--ink-2); font-size: 13px; line-height: 1.35; }
+.cell-del {
+  flex: 0 0 auto;
+  border: 0;
+  background: none;
+  color: var(--err);
+  font-size: 15px;
+  padding: 6px 0 6px 12px;
+  cursor: pointer;
+}
 
 /* ---------------------------------------------------------------- スライダー */
 

@@ -90,7 +90,7 @@ class TestClient(ServerMixin, unittest.TestCase):
         self.assertEqual(p1, p2)
         self.assertTrue(p1.is_file())
         self.assertEqual(FakeTTS.requests, [
-            {"text": "こんにちは", "speaker": "ono_anna", "language": "japanese"}])
+            {"text": "こんにちは", "speaker": "ono_anna", "style": "", "language": "japanese"}])
 
     def test_different_voice_is_a_different_cache_entry(self):
         self.tts.render("Hello", "qwen:ryan")
@@ -108,6 +108,70 @@ class TestClient(ServerMixin, unittest.TestCase):
         self.tts.render("こんにちは", "qwen:ono_anna")
         self.assertGreater(p.stat().st_mtime, 1e9)   # 使ったので更新時刻が今になる
         self.assertEqual(len(FakeTTS.requests), 1)
+
+
+class FakeQwenFull(FakeTTS):
+    """styles と作った声を返し、/design も受ける Qwen3-TTS のダミー。"""
+    designed = []
+
+    def do_GET(self):
+        body = json.dumps({"speakers": ["ono_anna", "ryan"], "styles": ["announcer"],
+                           "designed": FakeQwenFull.designed}).encode()
+        self._send(200, body, "application/json")
+
+    def do_POST(self):
+        if self.path == "/design":
+            req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            FakeTTS.requests.append(req)
+            made = {"id": "a1b2c3d4", "name": req["name"], "description": req["description"],
+                    "language": req["language"]}
+            FakeQwenFull.designed = [made]
+            self._send(200, json.dumps(made).encode(), "application/json")
+        else:
+            super().do_POST()
+
+
+class TestStylesAndDesign(unittest.TestCase):
+    def setUp(self):
+        FakeTTS.requests = []
+        FakeTTS.fail = False
+        FakeQwenFull.designed = []
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeQwenFull)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.tts = neural.NeuralTTS(Path(self.tmp.name),
+                                    url=f"http://127.0.0.1:{srv.server_address[1]}")
+
+    def test_every_speaker_gets_an_announcer_variant(self):
+        v = {x["name"]: x["label"] for x in self.tts.voices()}
+        self.assertEqual(v["qwen:ono_anna@announcer"], "Ono Anna・アナウンサー風（Qwen3-TTS）")
+        self.assertEqual(v["qwen:ryan@announcer"], "Ryan・アナウンサー風（Qwen3-TTS）")
+        self.assertIn("qwen:ono_anna", v)
+
+    def test_announcer_sends_the_style(self):
+        self.tts.render("おはようございます", "qwen:ono_anna@announcer")
+        self.assertEqual(FakeTTS.requests[-1]["speaker"], "ono_anna")
+        self.assertEqual(FakeTTS.requests[-1]["style"], "announcer")
+
+    def test_design_then_use_the_new_voice(self):
+        made = self.tts.design("女性アナウンサー", "40代の落ち着いた女性アナウンサー")
+        self.assertEqual(made, {"name": "qwen:design:a1b2c3d4",
+                                "label": "女性アナウンサー（Qwen3-TTS・作った声）"})
+        self.assertEqual(FakeTTS.requests[0]["language"], "japanese")
+        first = self.tts.voices()[0]
+        self.assertEqual(first["name"], "qwen:design:a1b2c3d4")
+        self.assertTrue(first["designed"])
+        self.assertEqual(first["locale"], "ja_JP")
+        self.tts.render("はい", "qwen:design:a1b2c3d4")
+        self.assertEqual(FakeTTS.requests[-1]["speaker"], "design:a1b2c3d4")
+
+    def test_design_failure_raises(self):
+        down = neural.NeuralTTS(Path(self.tmp.name), url="http://127.0.0.1:9")
+        with self.assertRaises(ValueError):
+            down.design("x", "y")
 
 
 class TestServerDown(unittest.TestCase):

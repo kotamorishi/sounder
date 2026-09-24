@@ -507,6 +507,7 @@ function renderSettings() {
   $('#quiet-end').value = q.end || '07:00';
   $('#quiet-desc').textContent = SL.describeQuiet(q);
   $('#set-voice-val').textContent = voiceLabel(st.default_voice) || 'システム既定';
+  renderDesigned();
   const neural = state.voices.filter((v) => 'asleep' in v);
   $('#tts-idle-block').hidden = !neural.length;
   const idle = String(st.tts_idle_minutes ?? 30);
@@ -991,6 +992,55 @@ function duplicate(s) {
   copy.name = (s.name || '予定') + ' のコピー';
   copy.last_fired = null;
   openEditor(copy, { asNew: true });
+}
+
+// --- 言葉で説明して声を作る（Qwen3-TTS）
+function renderDesigned() {
+  const qwen = state.voices.some((v) => v.name.startsWith('qwen:'));
+  $('#design-block').hidden = !qwen;
+  const made = state.voices.filter((v) => v.designed);
+  $('#designed-block').hidden = !made.length;
+  const box = $('#designed-list');
+  box.textContent = '';
+  for (const v of made) {
+    const row = el('div', 'cell');
+    const text = el('span', 'cell-label');
+    text.append(el('span', null, v.label.replace('（Qwen3-TTS・作った声）', '')));
+    if (v.description) text.append(el('span', 'cell-sub', v.description));
+    const del = el('button', 'cell-del', '削除');
+    del.type = 'button';
+    del.addEventListener('click', async () => {
+      if (!(await confirmSheet(`声「${text.firstChild.textContent}」を削除しますか？`, '削除'))) return;
+      try {
+        const res = await api('DELETE', `/api/voices/design/${v.name.split(':').pop()}`);
+        state.voices = res.voices;
+        renderSettings();
+        toast('削除しました');
+      } catch (e) { fail(e); }
+    });
+    row.append(text, del);
+    box.append(row);
+  }
+}
+
+async function makeVoice() {
+  const name = $('#d-name').value.trim(), description = $('#d-desc').value.trim();
+  if (!name || !description) { toast('名前と声の説明を入れてください', true); return; }
+  const btn = $('#d-make');
+  btn.disabled = true;
+  btn.textContent = '作っています…（30 秒ほど）';
+  try {
+    const res = await api('POST', '/api/voices/design', { name, description, language: $('#d-lang').value });
+    state.voices = res.voices;
+    $('#d-name').value = '';
+    $('#d-desc').value = '';
+    renderSettings();
+    toast(`声「${name}」を作りました`);
+    previewSpeech({ voice: res.voice.name, rate: Number($('#set-rate').value), volume: Number($('#set-volume').value) });
+  } catch (e) { fail(e); } finally {
+    btn.disabled = false;
+    btn.textContent = 'この説明で声を作る';
+  }
 }
 
 const TTS_IDLE_OPTIONS = [['0', '休ませない'], ['10', '10分使わなかったら'], ['30', '30分使わなかったら'],
@@ -1654,6 +1704,7 @@ function wire() {
   };
   $('#quiet-start').addEventListener('change', saveQuiet);
   $('#quiet-end').addEventListener('change', saveQuiet);
+  $('#d-make').addEventListener('click', makeVoice);
   $('#set-voice-btn').addEventListener('click', () => {
     renderVoiceList($('#set-voice-list'), state.settings.default_voice, (v) => { saveSettings({ default_voice: v }, '声を保存しました'); previewSpeech({ voice: v, rate: Number($('#set-rate').value), volume: Number($('#set-volume').value) }); });
     openPush('#push-voice');

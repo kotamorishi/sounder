@@ -215,7 +215,33 @@
       <span class="nav-spacer"></span>
     </div>
   </header>
-  <div class="push-scroll" id="set-voice-list"></div>
+  <div class="push-scroll">
+    <div id="set-voice-list"></div>
+    <div class="group-block" id="designed-block" hidden>
+      <h2 class="group-head">作った声</h2>
+      <div class="group" id="designed-list"></div>
+    </div>
+    <div class="group-block" id="design-block" hidden>
+      <h2 class="group-head">声を作る（Qwen3-TTS）</h2>
+      <div class="group">
+        <label class="cell">
+          <span class="cell-label">名前</span>
+          <input type="text" class="cell-input cell-text" id="d-name" maxlength="40" placeholder="例）女性アナウンサー" autocomplete="off">
+        </label>
+        <textarea id="d-desc" class="cell-textarea" rows="3" maxlength="500" aria-label="声の説明"
+          placeholder="例）40代の落ち着いた女性アナウンサー。低めで柔らかく、はっきりした発音。ニュースを読むような自然な話し方。"></textarea>
+        <label class="cell">
+          <span class="cell-label">言語</span>
+          <select class="cell-input cell-select" id="d-lang">
+            <option value="japanese">日本語</option>
+            <option value="english">英語</option>
+          </select>
+        </label>
+        <button type="button" class="cell cell-button" id="d-make">この説明で声を作る</button>
+      </div>
+      <p class="footnote">年齢・性別・声の高さ・話し方などを言葉で書くと、その声を作ります（日本語でも英語でも書けます）。作るのに 30 秒ほどかかり、できた声は一覧の先頭に出て、Mac で試聴します。</p>
+    </div>
+  </div>
 </div>
 
 <div class="push" id="push-log" hidden>

@@ -291,6 +291,35 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if parts[:2] == ["voices", "design"]:
+            qwen = next((e for e in app.player.tts if isinstance(e, neural.NeuralTTS)), None)
+            if qwen is None:
+                raise ValidationError("Qwen3-TTS が使えません")
+            if parts == ["voices", "design"] and method == "POST":
+                body = self._json_body()
+                name = (body.get("name") or "").strip()
+                desc = (body.get("description") or "").strip()
+                lang = body.get("language") or "japanese"
+                if not name or not desc:
+                    raise ValidationError("名前と声の説明を入れてください")
+                if len(name) > 40 or len(desc) > 500:
+                    raise ValidationError("名前は 40 文字、説明は 500 文字までです")
+                if lang not in ("japanese", "english"):
+                    raise ValidationError("言語の指定が不正です")
+                try:
+                    made = qwen.design(name, desc, lang)
+                except ValueError as exc:
+                    raise ValidationError(f"声を作れませんでした: {exc}")
+                app.log("info", f"声「{name}」を作りました")
+                self._json({"voice": made, "voices": app.player.voices()})
+                return
+            if len(parts) == 3 and method == "DELETE":
+                if not qwen.delete_design(parts[2]):
+                    raise ValidationError("声を削除できませんでした")
+                app.log("info", "作った声を削除しました")
+                self._json({"voices": app.player.voices()})
+                return
+
         if parts == ["settings"] and method in ("PUT", "PATCH"):
             self._json({"settings": app.store.update_settings(self._json_body())})
             return
