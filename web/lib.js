@@ -104,7 +104,17 @@
     if ((d.lead_times || []).length) {
       base += '（' + d.lead_times.map(function (m) { return m + '分前'; }).join('・') + 'に予告）';
     }
+    if (d.kind !== 'once' && skipLabel(d.skip)) base += '（' + skipLabel(d.skip) + '）';
     return base;
+  }
+
+  /** お休みの日の説明（'祝日・休校日は休み'）。skip が空なら '' */
+  function skipLabel(skip) {
+    skip = skip || [];
+    var parts = [];
+    if (skip.indexOf('on_holidays') >= 0) parts.push('祝日');
+    if (skip.some(function (c) { return c.indexOf('tdsb_') === 0; })) parts.push('休校日');
+    return parts.length ? parts.join('・') + 'は休み' : '';
   }
 
   /** 「1回だけ」の予定がもう過ぎているか */
@@ -215,12 +225,17 @@
 
   /** 一覧の行: 「名前 · 平日」を意味のまとまりに分けたもの（先頭の空白はまとまりの区切り） */
   function rowLabelParts(s) {
-    if (s.kind === 'interval') {
-      return [s.name, ' · ' + s.every_minutes + '分ごと', ' · ' + daysLabel(s.days)];
-    }
     if (s.kind === 'once') return [s.name];
-    if (s.kind === 'monthly' || s.kind === 'yearly') return [s.name, ' · ' + dateRule(s)];
-    return [s.name, ' · ' + daysLabel(s.days)];
+    var parts;
+    if (s.kind === 'interval') {
+      parts = [s.name, ' · ' + s.every_minutes + '分ごと', ' · ' + daysLabel(s.days)];
+    } else if (s.kind === 'monthly' || s.kind === 'yearly') {
+      parts = [s.name, ' · ' + dateRule(s)];
+    } else {
+      parts = [s.name, ' · ' + daysLabel(s.days)];
+    }
+    if (skipLabel(s.skip)) parts.push('（' + skipLabel(s.skip) + '）');
+    return parts;
   }
 
   /** 一覧の並び順（区分の中で時刻順） */
@@ -277,6 +292,7 @@
 
   /** タイムラインの 1 件の状態 [表示する文, 鳴らないので破線にするか] */
   function eventState(e, master) {
+    if (e.off) return [e.off + (e.past ? 'のため鳴らしませんでした' : 'のため鳴りません'), true];
     if (e.past) {
       if (e.result === 'fired') return ['再生しました', false];
       if (e.result === 'skipped') {
@@ -328,7 +344,7 @@
     weekStart: weekStart, sameDay: sameDay, weekRangeLabel: weekRangeLabel,
     fmtClock: fmtClock, fmtWhen: fmtWhen, fmtCountdown: fmtCountdown,
     describeDays: describeDays, describeDom: describeDom, describeRecurrence: describeRecurrence,
-    describeQuiet: describeQuiet, volumePct: volumePct, isPast: isPast,
+    describeQuiet: describeQuiet, volumePct: volumePct, isPast: isPast, skipLabel: skipLabel,
     domOptions: domOptions, monthOptions: monthOptions, intervalOptions: intervalOptions,
     domHint: domHint,
     SECTIONS: SECTIONS, shortHM: shortHM, daysLabel: daysLabel, onceLabel: onceLabel,

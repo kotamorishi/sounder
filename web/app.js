@@ -12,7 +12,7 @@ const OLD_HASH = { list: 'schedules', week: 'timeline' };
 
 let state = {
   settings: {}, schedules: [], sounds: { builtin: [], user: [], system: [] },
-  voices: [], next_events: [], log: [], builtin_labels: {}, playing: false,
+  voices: [], calendars: [], next_events: [], log: [], builtin_labels: {}, playing: false,
 };
 let editing = null;   // 編集中のスケジュール id（新規は null）
 let draft = null;     // 編集中の下書き
@@ -634,6 +634,7 @@ const PX_PER_MIN = 72 / 60;
 let tlWeekStart = SL.weekStart(new Date());
 let tlDay = SL.isoDate(new Date());
 let tlEvents = {};          // 'YYYY-MM-DD' → events（発火時刻の日付で振り分け済み）
+let tlNotes = {};           // 'YYYY-MM-DD' → その日の祝日・学校の休み（「PA デー」など）
 let tlMaster = true;
 let tlFetchedAt = 0;
 let tlLayout = null;        // { yOf }
@@ -646,6 +647,7 @@ async function loadTimeline(scroll) {
     const data = await api('GET', `/api/calendar?start=${start}&days=8`);
     if (start !== SL.isoDate(tlWeekStart)) return; // 取得中に週が変わった
     tlEvents = SL.eventsByDate(data.days);
+    tlNotes = Object.fromEntries(data.days.map((d) => [d.date, d.notes || []]));
     tlMaster = data.master_enabled !== false;
     tlFetchedAt = Date.now();
     renderTimeline(scroll);
@@ -663,7 +665,7 @@ function renderWeek() {
     b.type = 'button';
     b.setAttribute('aria-pressed', key === tlDay ? 'true' : 'false');
     // 点は「その日に鳴る予定の数」（時報のような一定間隔は 1 つと数える）
-    const mains = new Set((tlEvents[key] || []).filter((e) => e.tag === 'main' && e.enabled)
+    const mains = new Set((tlEvents[key] || []).filter((e) => e.tag === 'main' && e.enabled && !e.off)
       .map((e) => e.schedule_id)).size;
     b.setAttribute('aria-label', `${d.getMonth() + 1}月${d.getDate()}日（${SL.DAYS[i]}）${mains ? `、予定${mains}件` : ''}`);
     b.append(el('span', 'w', SL.DAYS[i]), el('span', 'n', String(d.getDate())),
@@ -676,9 +678,10 @@ function renderWeek() {
 function renderTlTitle() {
   $('#tl-month').textContent = SL.weekRangeLabel(SL.isoDate(tlWeekStart));
   const now = new Date();
-  $('#tl-day').textContent = tlDay === SL.isoDate(now)
+  const notes = (tlNotes[tlDay] || []).join('・');
+  $('#tl-day').textContent = (tlDay === SL.isoDate(now)
     ? `今日 · ${hmOf(now)}`
-    : SL.onceLabel(tlDay);
+    : SL.onceLabel(tlDay)) + (notes ? ` · ${notes}` : '');
   $('#tl-today').hidden = tlDay === SL.isoDate(now);
 }
 
@@ -1032,7 +1035,7 @@ function blank() {
     date: SL.isoDate(now),
     days: [0, 1, 2, 3, 4], every_minutes: 60,
     day_of_month: String(now.getDate()), month: String(now.getMonth() + 1),
-    window: { start: '09:00', end: '21:00' }, lead_times: [], note: '',
+    window: { start: '09:00', end: '21:00' }, lead_times: [], note: '', skip: [],
     action: {
       type: 'sound', sound: 'builtin:doorbell',
       volume: state.settings.default_volume ?? 0.6, repeat: 1,
@@ -1062,6 +1065,7 @@ function openEditor(sched, opts = {}) {
   draft.month = String(draft.month ?? b.month);
   if (!draft.days || !draft.days.length) draft.days = draft.kind === 'interval' ? [0, 1, 2, 3, 4, 5, 6] : b.days;
   draft.lead_times = draft.lead_times || [];
+  draft.skip = draft.skip || [];
   if (!draft.action.sound) draft.action.sound = b.action.sound;
   draft._sound = draft.action.type !== 'speak';
   draft._speak = draft.action.type !== 'sound';
@@ -1187,6 +1191,31 @@ function renderRepeatPage() {
   box.querySelectorAll('.check-cell').forEach((c) => c.setAttribute('role', 'menuitemcheckbox'));
   const cur = draft.days.join(',');
   $$('#f-quick button').forEach((b) => b.classList.toggle('is-on', b.dataset.days === cur));
+  renderSkip();
+}
+
+// 祝日・学校の休校日を選ぶ（TDSB の小学校と中高はどちらか一方）
+function renderSkip() {
+  const box = $('#f-skip');
+  box.textContent = '';
+  const cals = state.calendars || [];
+  for (const c of cals) {
+    box.append(checkCell(c.label, draft.skip.includes(c.id), () => {
+      let set = draft.skip.filter((x) => x !== c.id);
+      if (!draft.skip.includes(c.id)) {
+        if (c.id.startsWith('tdsb_')) set = set.filter((x) => !x.startsWith('tdsb_'));
+        set.push(c.id);
+      }
+      draft.skip = cals.map((x) => x.id).filter((id) => set.includes(id));
+      renderRepeatPage();
+      renderEditorValues();
+    }));
+  }
+  box.querySelectorAll('.check-cell').forEach((c) => c.setAttribute('role', 'menuitemcheckbox'));
+  const tdsb = cals.find((c) => draft.skip.includes(c.id) && c.known_until);
+  $('#f-skip-hint').textContent = tdsb
+    ? `TDSB の休校日（PA デー・冬休み・3 月休み・夏休みなど）は ${tdsb.known_until.replace(/^(\d+)-0?(\d+)-0?(\d+)$/, '$1年$2月$3日')}までの分が入っています。その先の日は、新しい年度の予定表を入れるまでは普段どおり鳴ります。`
+    : '祝日は元日・ファミリー・デー・グッドフライデー・ビクトリア・デー・カナダ・デー・レイバー・デー・サンクスギビング・クリスマス・ボクシング・デー（土日に重なったら振替休日も）です。';
 }
 
 // --- 子画面: サウンド（本番 / 予告）
@@ -1302,6 +1331,7 @@ function collect() {
     enabled: draft.enabled !== false,
     kind, note: $('#f-note').value.trim(),
     lead_times: draft.lead_times,
+    skip: kind === 'once' ? [] : draft.skip,
     action: {
       type,
       sound: a.sound,

@@ -7,6 +7,8 @@ import threading
 import time
 from datetime import date, datetime, timedelta
 
+from . import daysoff
+
 DAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"]
 LAST_DAY = "last"
 
@@ -36,11 +38,15 @@ def _matches_day_of_month(want, day: date) -> bool:
     return day.day == want
 
 
-def day_occurrences(sched: dict, day: date) -> list[tuple[datetime, str, int]]:
+def day_occurrences(sched: dict, day: date, *, ignore_skip: bool = False
+                    ) -> list[tuple[datetime, str, int]]:
     """その日が基準日となる発火時刻を (時刻, 種別, 予告分) で返す。
 
     種別は "main" か "lead"。予告は基準時刻より前なので、前日にまたがることもある。
+    お休みの日（sched["skip"] の暦で休み）は何も返さない。予告も一緒に鳴らさない。
     """
+    if not ignore_skip and daysoff.off_reason(sched.get("skip"), day):
+        return []
     kind = sched["kind"]
     mains: list[datetime] = []
 
@@ -174,7 +180,8 @@ def calendar_days(schedules: list[dict], start: date, days: int,
         day = start + timedelta(days=i)
         events = []
         for s in schedules:
-            for when, tag, lead in day_occurrences(s, day):
+            off = daysoff.off_reason(s.get("skip"), day)
+            for when, tag, lead in day_occurrences(s, day, ignore_skip=True):
                 events.append({
                     "schedule_id": s["id"],
                     "name": s["name"],
@@ -190,6 +197,7 @@ def calendar_days(schedules: list[dict], start: date, days: int,
                     "quiet": in_quiet_hours(settings, when),
                     "past": when <= now,
                     "result": outcome(s, when, tag, lead, log_entries) if when <= now else None,
+                    "off": off,
                 })
         events.sort(key=lambda e: e["at"])
         out.append({
@@ -199,8 +207,22 @@ def calendar_days(schedules: list[dict], start: date, days: int,
             "month": day.month,
             "is_today": day == now.date(),
             "events": events,
+            # その日の祝日・学校の休み（予定で使っている暦のぶんだけ）
+            "notes": day_notes(schedules, day),
         })
     return out
+
+
+def day_notes(schedules: list[dict], day: date) -> list[str]:
+    """画面の日付の横に出す「サンクスギビング」「PA デー」など。祝日はいつでも出す。"""
+    cals = ["on_holidays"] + [c for c in daysoff.CALENDARS
+                              if any(c in (s.get("skip") or []) for s in schedules)]
+    notes = []
+    for cal in dict.fromkeys(cals):
+        r = daysoff.reason(cal, day)
+        if r and r != "週末" and r not in notes:
+            notes.append(r)
+    return notes
 
 
 def in_quiet_hours(settings: dict, when: datetime) -> bool:
@@ -232,7 +254,18 @@ def describe(sched: dict) -> str:
         base = f"{describe_days(sched['days'])} {w['start']}〜{w['end']} の {sched['every_minutes']}分ごと"
     if sched.get("lead_times"):
         base += "（" + "・".join(f"{m}分前" for m in sched["lead_times"]) + "に予告）"
+    if sched.get("skip"):
+        base += "（" + describe_skip(sched["skip"]) + "）"
     return base
+
+
+def describe_skip(skip: list[str]) -> str:
+    parts = []
+    if "on_holidays" in skip:
+        parts.append("祝日")
+    if any(c.startswith("tdsb_") for c in skip):
+        parts.append("休校日")
+    return "・".join(parts) + "は休み"
 
 
 def describe_days(days: list[int]) -> str:

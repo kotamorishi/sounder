@@ -21,7 +21,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import scheduler as sched_mod
-from . import neural, tones
+from . import daysoff, neural, tones
 from .config import Store, ValidationError
 from .eventlog import EventLog
 from .player import Player, SoundNotFound
@@ -413,6 +413,7 @@ class Handler(BaseHTTPRequestHandler):
             "schedules": self._decorate(app.store.schedules()),
             "sounds": app.player.library(),
             "voices": app.player.voices(),
+            "calendars": daysoff.catalog(),
             "next_events": sched_mod.next_events(
                 app.store.schedules(), limit=6, settings=app.store.settings),
             "log": app.log.recent(30),

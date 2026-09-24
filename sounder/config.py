@@ -12,6 +12,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from . import daysoff
+
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 KINDS = ("weekly", "monthly", "yearly", "once", "interval")
@@ -143,6 +145,12 @@ def validate_schedule(raw: Any, *, keep_id: str | None = None) -> dict[str, Any]
         s["window"] = {"start": start, "end": end}
         s["anchor"] = _time(raw.get("anchor", start), "基準時刻")
         s["days"] = _days(raw.get("days"), required=False)
+
+    # お休みの日（祝日・学校の休校日）は鳴らさない
+    skip = raw.get("skip") or []
+    if not isinstance(skip, list) or any(c not in daysoff.CALENDARS for c in skip):
+        raise ValidationError("お休みの日の指定が不正です")
+    s["skip"] = [c for c in daysoff.CALENDARS if c in skip] if kind != "once" else []
 
     # 事前予告（お出かけ 10 分前など）
     leads = raw.get("lead_times") or []

@@ -156,6 +156,14 @@ eq(SL.rowLabelParts(M), ['支払い', ' · 毎月25日'], 'rowLabelParts 毎月'
 eq(SL.rowLabelParts(Y), ['記念日', ' · 毎年1月1日'], 'rowLabelParts 毎年');
 eq(SL.rowLabelParts(O), ['病院'], 'rowLabelParts 1回');
 eq(SL.rowLabelParts(I), ['時報', ' · 60分ごと', ' · 毎日'], 'rowLabelParts 間隔');
+eq(SL.rowLabelParts(Object.assign({}, W, { skip: ['on_holidays', 'tdsb_elementary'] })),
+   ['朝', ' · 平日', '（祝日・休校日は休み）'], 'rowLabelParts お休みの日');
+eq(SL.skipLabel(['on_holidays']), '祝日は休み', 'skipLabel 祝日');
+eq(SL.skipLabel(['tdsb_secondary']), '休校日は休み', 'skipLabel 休校日');
+eq(SL.skipLabel([]), '', 'skipLabel なし');
+eq(SL.skipLabel(undefined), '', 'skipLabel 未設定');
+ok(SL.describeRecurrence(Object.assign({}, W, { skip: ['on_holidays'] })).indexOf('（祝日は休み）') > 0,
+   'describeRecurrence お休みの日');
 eq(SL.sortKey(W), '07:05', 'sortKey 毎週');
 eq(SL.sortKey(M), '25 10:00', 'sortKey 毎月');
 ok(SL.sortKey({ kind: 'monthly', day_of_month: 'last', time: '07:00' }) > SL.sortKey(M), 'sortKey 月末は後ろ');
@@ -199,6 +207,10 @@ eq(SL.nextNote({ quiet: true }), '禁止時間（〜）なので鳴りません'
 
 // --- タイムラインの状態 ---
 eq(SL.eventState({ past: true, result: 'fired' }, true), ['再生しました', false], 'eventState 再生');
+eq(SL.eventState({ off: 'PA デー', past: false, enabled: true }, true),
+   ['PA デーのため鳴りません', true], 'eventState 休校日');
+eq(SL.eventState({ off: 'サンクスギビング', past: true, enabled: true }, true),
+   ['サンクスギビングのため鳴らしませんでした', true], 'eventState 過ぎた祝日');
 eq(SL.eventState({ past: true, result: 'skipped', quiet: true }, true),
    ['禁止時間のため鳴らしませんでした', false], 'eventState 禁止時間でスキップ');
 eq(SL.eventState({ past: true, result: 'skipped', quiet: false }, true),
