@@ -170,6 +170,13 @@ function shiftWeek(n) {
 function renderHero() {
   var next = state.next_events[0];
   var hero = $('#hero');
+  var note = $('#hero-note');
+  var off = state.settings.master_enabled === false;
+  note.hidden = true;
+  if (off) {
+    note.hidden = false;
+    note.textContent = '全体がオフです。右上のスイッチを入れるまで何も鳴りません。';
+  }
   if (!next) {
     $('#hero-when').hidden = true;
     $('#hero-name').textContent = state.schedules.length
@@ -188,6 +195,10 @@ function renderHero() {
   test.hidden = false;
   test.onclick = function () { testSchedule(next.schedule_id, next.tag); };
   hero.classList.toggle('is-quiet', !!next.quiet);
+  if (next.quiet && !off) {
+    note.hidden = false;
+    note.textContent = '禁止時間に入るので、この予定は鳴りません。';
+  }
 }
 
 // ------------------------------------------------------------------ その日の一覧

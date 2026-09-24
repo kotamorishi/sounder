@@ -242,7 +242,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({
                 "now": datetime.now().isoformat(timespec="seconds"),
                 "playing": app.player.is_playing(),
-                "next_events": sched_mod.next_events(app.store.schedules(), limit=6),
+                "next_events": sched_mod.next_events(
+                    app.store.schedules(), limit=6, settings=app.store.settings),
                 "log": app.log.recent(25),
             })
             return
@@ -390,7 +391,8 @@ class Handler(BaseHTTPRequestHandler):
             "schedules": self._decorate(app.store.schedules()),
             "sounds": app.player.library(),
             "voices": app.player.voices(),
-            "next_events": sched_mod.next_events(app.store.schedules(), limit=6),
+            "next_events": sched_mod.next_events(
+                app.store.schedules(), limit=6, settings=app.store.settings),
             "log": app.log.recent(30),
             "playing": app.player.is_playing(),
             "host": f"{self.headers.get('Host')}",

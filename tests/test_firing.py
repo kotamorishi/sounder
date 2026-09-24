@@ -15,9 +15,11 @@ from sounder import config, scheduler  # noqa: E402
 class FakePlayer:
     def __init__(self):
         self.played = []
+        self.queued = []
 
-    def play(self, action, *, settings, label=""):
+    def play(self, action, *, settings, label="", queue=False):
         self.played.append((label, action))
+        self.queued.append(queue)
 
     def stop(self):
         pass
@@ -47,6 +49,16 @@ class Base(unittest.TestCase):
 
 
 class TestFiring(Base):
+    def test_scheduled_sounds_are_queued_not_cut(self):
+        """同じ時刻に複数鳴るとき、後から来たものが前のものを消さないこと。"""
+        self.add(name="A", time="08:30")
+        self.add(name="B", time="08:30")
+        t = datetime(2026, 9, 21, 8, 29, 59)
+        self.sched._last_tick = t
+        self.sched.tick(t + timedelta(seconds=1))
+        self.assertEqual(len(self.player.played), 2)
+        self.assertEqual(self.player.queued, [True, True])
+
     def test_fires_once_at_the_right_second(self):
         self.add(time="08:30")
         t = datetime(2026, 9, 21, 8, 29, 59)

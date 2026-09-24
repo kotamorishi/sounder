@@ -391,3 +391,61 @@ class TestSignalFallback(unittest.TestCase):
                 raise OSError("送れない")
 
         p._signal_group(Stub(), 15)  # 例外が外に出なければ合格
+
+
+class TestQueue(Base):
+    settings = {"default_volume": 0.6, "default_voice": "", "speak_rate": 180}
+
+    def sound(self, name="builtin:ding"):
+        return {"type": "sound", "sound": name}
+
+    def test_queued_playback_runs_one_after_another(self):
+        self.p.afplay = self._script("afplay-slow", "#!/bin/sh\nsleep 0.25\n"
+                                     "printf 'played %s\\n' \"$*\" >> \"" + str(self.calls) + "\"\n")
+        self.p.play(self.sound(), settings=self.settings, queue=True)
+        self.p.play(self.sound("builtin:doorbell"), settings=self.settings, queue=True)
+        calls = self.wait_for_calls(2, timeout=8)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("ding.wav", calls[0])
+        self.assertIn("doorbell.wav", calls[1])
+
+    def test_immediate_playback_drops_what_was_waiting(self):
+        self.p.afplay = self._script("afplay-slow2", "#!/bin/sh\nsleep 0.6\n"
+                                     "printf 'played %s\\n' \"$*\" >> \"" + str(self.calls) + "\"\n")
+        self.p.play(self.sound(), settings=self.settings, queue=True)
+        self.p.play(self.sound("builtin:doorbell"), settings=self.settings, queue=True)
+        time.sleep(0.15)
+        self.p.play(self.sound("builtin:cuckoo"), settings=self.settings)  # 試聴は割り込み
+        calls = self.wait_for_calls(1, timeout=8)
+        time.sleep(0.5)
+        joined = "\n".join(self.recorded())
+        self.assertIn("cuckoo.wav", joined)
+        self.assertNotIn("doorbell.wav", joined, "待っていたものは捨てる")
+
+    def test_stop_clears_the_queue(self):
+        self.p.afplay = self._script("afplay-slow3", "#!/bin/sh\nsleep 0.5\n")
+        self.p.play(self.sound(), settings=self.settings, queue=True)
+        self.p.play(self.sound("builtin:doorbell"), settings=self.settings, queue=True)
+        time.sleep(0.1)
+        self.p.stop()
+        time.sleep(0.4)
+        self.assertEqual(len(self.p._queue), 0)
+        self.assertNotIn("doorbell.wav", "\n".join(self.recorded()))
+
+    def test_a_failing_item_does_not_stop_the_queue(self):
+        real = self.p.play_blocking
+        calls = []
+
+        def flaky(action, *, settings, label=""):
+            calls.append(action["sound"])
+            if len(calls) == 1:
+                raise RuntimeError("わざと失敗")
+            return real(action, settings=settings, label=label)
+        self.p.play_blocking = flaky
+        self.p.play(self.sound(), settings=self.settings, queue=True)
+        self.p.play(self.sound("builtin:doorbell"), settings=self.settings, queue=True)
+        end = time.time() + 5
+        while len(calls) < 2 and time.time() < end:
+            time.sleep(0.02)
+        self.assertEqual(calls, ["builtin:ding", "builtin:doorbell"])
+        self.assertTrue(any("再生中にエラー" in m for _lv, m in self.msgs))

@@ -93,9 +93,14 @@ HORIZONS = {"weekly": 21, "interval": 21, "once": 400, "monthly": 70, "yearly": 
 
 
 def next_events(schedules: list[dict], *, now: datetime | None = None,
-                limit: int = 8, per_schedule: int = 3) -> list[dict]:
-    """有効なスケジュールの次回発火予定を時刻順に返す。"""
+                limit: int = 8, per_schedule: int = 3,
+                settings: dict | None = None) -> list[dict]:
+    """有効なスケジュールの次回発火予定を時刻順に返す。
+
+    settings を渡すと、禁止時間に当たるものに quiet=True を付ける。
+    """
     now = now or datetime.now()
+    settings = settings or {}
     found: list[tuple[datetime, dict]] = []
     for s in schedules:
         if not s.get("enabled"):
@@ -110,6 +115,7 @@ def next_events(schedules: list[dict], *, now: datetime | None = None,
                 found.append((when, {
                     "schedule_id": s["id"], "name": s["name"], "tag": tag,
                     "lead": lead, "at": when.isoformat(timespec="seconds"),
+                    "quiet": in_quiet_hours(settings, when),
                 }))
                 picked += 1
                 if picked >= per_schedule:
@@ -276,7 +282,7 @@ class Scheduler:
         action = self._action_for(sched, tag, lead, settings)
         self.log("fired", f"{label} を再生しました", schedule_id=sched["id"])
         self.store.mark_fired(sched["id"], when)
-        self.player.play(action, settings=settings, label=label)
+        self.player.play(action, settings=settings, label=label, queue=True)
 
         if sched["kind"] == "once" and tag == "main":
             try:
