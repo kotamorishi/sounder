@@ -111,6 +111,130 @@ ok(!SL.isPast({ kind: 'weekly', date: '2026-09-23', time: '08:00' }, NOW), 'isPa
 ok(!SL.isPast({ kind: 'once', time: '08:00' }, NOW), 'isPast 日付なし');
 ok(!SL.isPast({ kind: 'once', date: '2026-09-25' }, NOW), 'isPast 時刻なし');
 
+// --- B案の画面の言い換え ---
+eq(SL.SECTIONS.map(function (x) { return x[1]; }), ['weekly', 'monthly', 'yearly', 'interval', 'once'],
+   'SECTIONS の並び');
+eq(SL.shortHM('08:05'), '8:05', 'shortHM 先頭の0');
+eq(SL.shortHM('18:05'), '18:05', 'shortHM 2桁');
+eq(SL.shortHM(null), '', 'shortHM 空');
+eq(SL.daysLabel([0, 1, 2, 3, 4]), '平日', 'daysLabel 平日');
+eq(SL.daysLabel([6, 5]), '週末', 'daysLabel 週末');
+eq(SL.daysLabel([0, 1, 2, 3, 4, 5, 6]), '毎日', 'daysLabel 毎日');
+eq(SL.daysLabel([4, 1]), '火・金', 'daysLabel 個別');
+eq(SL.daysLabel([]), '曜日なし', 'daysLabel 空');
+eq(SL.onceLabel('2026-09-27'), '9/27（日）', 'onceLabel');
+eq(SL.onceLabel(''), '', 'onceLabel 空');
+eq(SL.onceLabel('めちゃくちゃ'), '', 'onceLabel 不正');
+eq(SL.leadLabel([10, 5]), '10分前・5分前', 'leadLabel');
+eq(SL.leadLabel(null), '', 'leadLabel なし');
+eq(SL.dateRule({ kind: 'monthly', day_of_month: 25 }), '毎月25日', 'dateRule 毎月');
+eq(SL.dateRule({ kind: 'monthly', day_of_month: 'last' }), '毎月末', 'dateRule 毎月末');
+eq(SL.dateRule({ kind: 'yearly', month: 1, day_of_month: 1 }), '毎年1月1日', 'dateRule 毎年');
+eq(SL.dateRule({ kind: 'yearly', month: 2, day_of_month: 'last' }), '毎年2月末', 'dateRule 毎年 月末');
+
+eq(SL.repeatSummary({ kind: 'weekly', days: [1, 4] }), '火・金', 'repeatSummary 毎週');
+eq(SL.repeatSummary({ kind: 'monthly', day_of_month: 'last' }), '毎月末', 'repeatSummary 毎月');
+eq(SL.repeatSummary({ kind: 'yearly', month: '12', day_of_month: '24' }), '毎年12月24日', 'repeatSummary 毎年');
+eq(SL.repeatSummary({ kind: 'once', date: '2026-09-27' }), '1回だけ 9/27（日）', 'repeatSummary 1回');
+eq(SL.repeatSummary({ kind: 'interval', every_minutes: 60, days: [0, 1, 2, 3, 4, 5, 6] }),
+   '60分ごと', 'repeatSummary 間隔 毎日');
+eq(SL.repeatSummary({ kind: 'interval', every_minutes: 90, days: [0, 1, 2, 3, 4] }),
+   '90分ごと · 平日', 'repeatSummary 間隔 平日');
+
+var W = { name: '朝', kind: 'weekly', time: '07:05', days: [0, 1, 2, 3, 4] };
+var M = { name: '支払い', kind: 'monthly', time: '10:00', day_of_month: 25 };
+var Y = { name: '記念日', kind: 'yearly', time: '09:00', month: 1, day_of_month: 1 };
+var O = { name: '病院', kind: 'once', time: '06:30', date: '2026-09-27' };
+var I = { name: '時報', kind: 'interval', every_minutes: 60, days: [0, 1, 2, 3, 4, 5, 6],
+          window: { start: '09:00', end: '21:00' } };
+eq(SL.rowTime(W), { text: '7:05', mid: false }, 'rowTime 毎週');
+eq(SL.rowTime(M), { text: '10:00', mid: false }, 'rowTime 毎月');
+eq(SL.rowTime(O), { text: '9/27（日）6:30', mid: true }, 'rowTime 1回');
+eq(SL.rowTime(I), { text: '9:00 – 21:00', mid: true }, 'rowTime 間隔');
+eq(SL.rowLabelParts(W), ['朝', ' · 平日'], 'rowLabelParts 毎週');
+eq(SL.rowLabelParts(M), ['支払い', ' · 毎月25日'], 'rowLabelParts 毎月');
+eq(SL.rowLabelParts(Y), ['記念日', ' · 毎年1月1日'], 'rowLabelParts 毎年');
+eq(SL.rowLabelParts(O), ['病院'], 'rowLabelParts 1回');
+eq(SL.rowLabelParts(I), ['時報', ' · 60分ごと', ' · 毎日'], 'rowLabelParts 間隔');
+eq(SL.sortKey(W), '07:05', 'sortKey 毎週');
+eq(SL.sortKey(M), '25 10:00', 'sortKey 毎月');
+ok(SL.sortKey({ kind: 'monthly', day_of_month: 'last', time: '07:00' }) > SL.sortKey(M), 'sortKey 月末は後ろ');
+eq(SL.sortKey(Y), '01-01 09:00', 'sortKey 毎年');
+ok(SL.sortKey({ kind: 'yearly', month: 1, day_of_month: 'last', time: '07:00' }) > SL.sortKey(Y),
+   'sortKey 毎年 月末は後ろ');
+eq(SL.sortKey(O), '2026-09-27 06:30', 'sortKey 1回');
+eq(SL.sortKey(I), '09:00', 'sortKey 間隔');
+eq(SL.sortKey({ kind: 'interval' }), '', 'sortKey 間隔 時間帯なし');
+eq(SL.sortKey({ kind: 'weekly' }), '', 'sortKey 時刻なし');
+
+// --- 禁止時間 ---
+var NIGHT = { enabled: true, start: '23:00', end: '07:00' };
+var DAY = { enabled: true, start: '12:00', end: '13:00' };
+ok(SL.inQuiet(NIGHT, '23:30'), 'inQuiet またぎ 夜');
+ok(SL.inQuiet(NIGHT, '06:59'), 'inQuiet またぎ 朝');
+ok(!SL.inQuiet(NIGHT, '07:00'), 'inQuiet 終了時刻は含まない');
+ok(SL.inQuiet(DAY, 12 * 60), 'inQuiet 分で渡す');
+ok(!SL.inQuiet(DAY, '13:00'), 'inQuiet 日中 外');
+ok(!SL.inQuiet({ enabled: false, start: '00:00', end: '23:59' }, '12:00'), 'inQuiet オフ');
+ok(!SL.inQuiet(null, '12:00'), 'inQuiet 設定なし');
+ok(!SL.inQuiet({ enabled: true, start: '09:00', end: '09:00' }, '09:00'), 'inQuiet 同時刻');
+ok(!SL.inQuiet(DAY, 'めちゃくちゃ'), 'inQuiet 不正な時刻');
+eq(SL.quietState(W, NIGHT), '', 'quietState 毎週 かからない');
+eq(SL.quietState(Object.assign({}, W, { time: '06:30' }), NIGHT), 'all', 'quietState 毎週 かかる');
+eq(SL.quietState(I, DAY), 'some', 'quietState 間隔 一部');
+eq(SL.quietState(I, { enabled: true, start: '08:00', end: '22:00' }), 'all', 'quietState 間隔 全部');
+eq(SL.quietState(I, NIGHT), '', 'quietState 間隔 かからない');
+eq(SL.quietState({ kind: 'interval', every_minutes: 30, window: { start: '22:00', end: '01:00' } }, NIGHT),
+   'some', 'quietState 間隔 日付をまたぐ');
+eq(SL.quietState({ kind: 'interval', every_minutes: 0, window: { start: '22:00', end: '22:00' } }, NIGHT),
+   'some', 'quietState 間隔 既定の刻み・終日');
+eq(SL.quietState(W, null), '', 'quietState 設定なし');
+
+eq(SL.nextNote(null, {}), '', 'nextNote 予定なし');
+eq(SL.nextNote({ quiet: false }, { master_enabled: true }), '', 'nextNote 鳴る');
+eq(SL.nextNote({ quiet: false }, { master_enabled: false }), '全体がオフなので鳴りません', 'nextNote 全体オフ');
+eq(SL.nextNote({ quiet: true }, { quiet_hours: NIGHT }), '禁止時間（23:00〜7:00）なので鳴りません',
+   'nextNote 禁止時間');
+eq(SL.nextNote({ quiet: true }), '禁止時間（〜）なので鳴りません', 'nextNote 設定なし');
+
+// --- タイムラインの状態 ---
+eq(SL.eventState({ past: true, result: 'fired' }, true), ['再生しました', false], 'eventState 再生');
+eq(SL.eventState({ past: true, result: 'skipped', quiet: true }, true),
+   ['禁止時間のため鳴らしませんでした', false], 'eventState 禁止時間でスキップ');
+eq(SL.eventState({ past: true, result: 'skipped', quiet: false }, true),
+   ['鳴らしませんでした（全体オフ）', false], 'eventState 全体オフでスキップ');
+eq(SL.eventState({ past: true, result: 'missed' }, true),
+   ['過ぎていたため鳴らしませんでした', false], 'eventState 取りこぼし');
+eq(SL.eventState({ past: true, enabled: false }, true), ['オフの予定', false], 'eventState 過去のオフ');
+eq(SL.eventState({ past: true, enabled: true }, true), ['過ぎました', false], 'eventState 過去');
+eq(SL.eventState({ enabled: false }, true), ['オフの予定なので鳴りません', true], 'eventState オフ');
+eq(SL.eventState({ enabled: true }, false), ['全体がオフなので鳴りません', true], 'eventState 全体オフ');
+eq(SL.eventState({ enabled: true, quiet: true }, true), ['禁止時間なので鳴りません', true], 'eventState 禁止時間');
+eq(SL.eventState({ enabled: true }, true), [null, false], 'eventState 鳴る');
+
+var byDate = SL.eventsByDate([
+  { date: '2026-09-21', events: [
+    { at: '2026-09-21T08:15:00', tag: 'main', lead: 0 },
+    { at: '2026-09-21T08:05:00', tag: 'lead', lead: 10 },
+  ] },
+  { date: '2026-09-22', events: [
+    { at: '2026-09-21T23:40:00', tag: 'lead', lead: 30 },   // 火曜 0:10 の予告は月曜に鳴る
+    { at: '2026-09-22T00:10:00', tag: 'main', lead: 0 },
+    { at: '2026-09-22T00:10:00', tag: 'lead', lead: 0 },
+  ] },
+]);
+eq(Object.keys(byDate).sort(), ['2026-09-21', '2026-09-22'], 'eventsByDate 日付');
+eq(byDate['2026-09-21'].map(function (e) { return e.at.slice(11, 16); }), ['08:05', '08:15', '23:40'],
+   'eventsByDate 時刻順・前日の予告');
+eq(byDate['2026-09-21'][0].main_at, '2026-09-21T08:15:00', 'eventsByDate 予告の本番時刻');
+eq(byDate['2026-09-21'][2].main_at, '2026-09-22T00:10:00', 'eventsByDate 日付をまたぐ本番時刻');
+eq(byDate['2026-09-22'].map(function (e) { return e.tag; }), ['lead', 'main'], 'eventsByDate 同時刻は予告が先');
+eq(SL.eventsByDate(null), {}, 'eventsByDate 空');
+
+eq(SL.pastWarning({ kind: 'once', date: '2026-09-23', time: '08:00' }, NOW),
+   'この日時はもう過ぎています。保存しても鳴りません。', 'pastWarning 過去');
+eq(SL.pastWarning({ kind: 'once', date: '2026-09-25', time: '08:00' }, NOW), '', 'pastWarning 未来');
+
 // すべての公開関数を一度は呼んだか
 Object.keys(RAW).forEach(function (k) {
   if (!used[k]) failures.push('未テストの関数: ' + k);
