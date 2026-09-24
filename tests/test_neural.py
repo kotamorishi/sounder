@@ -157,6 +157,8 @@ class TestPlayerWithNeural(ServerMixin, PlayerBase):
         names = [v["name"] for v in self.p.voices()]
         self.assertEqual(names[0], "qwen:ono_anna")
         self.assertIn("Kyoko", names)
+        self.assertIn("qwen:ryan", names)
+        self.assertNotIn("qwen:vivian", names)  # 中国語の声は出さない
 
     def test_prefetch_renders_in_background(self):
         self.p.prefetch({"type": "speak", "text": "もうすぐです"}, settings=self.settings)

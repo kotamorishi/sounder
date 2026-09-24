@@ -30,6 +30,7 @@ done
 if [ "$1" = "-v" ] && [ "$2" = "?" ]; then
   printf 'Kyoko               ja_JP    # こんにちは\\n'
   printf 'Alex                en_US    # Hello\\n'
+  printf 'Amelie              fr_CA    # Bonjour\\n'
   printf 'これは音声一覧ではない行\\n'
 fi
 exit 0
@@ -165,7 +166,7 @@ class TestLibrary(Base):
 class TestVoices(Base):
     def test_parses_say_output_japanese_first(self):
         voices = self.p.voices()
-        self.assertEqual([v["name"] for v in voices], ["Kyoko", "Alex"])
+        self.assertEqual([v["name"] for v in voices], ["Kyoko", "Alex"])  # 仏語は出さない
         self.assertEqual(voices[0]["locale"], "ja_JP")
 
     def test_duplicate_voice_names_are_listed_once(self):

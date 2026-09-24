@@ -22,6 +22,8 @@ SYSTEM_SOUND_DIRS = (
 )
 AUDIO_EXT = {".wav", ".aiff", ".aif", ".mp3", ".m4a", ".aac", ".caf", ".flac", ".ogg", ".mp4"}
 SAFE_NAME = re.compile(r"^[^/\\\x00]{1,120}$")
+# 声の一覧に出す言語（ロケールの先頭）。ほかの言語の声は使わないので出さない
+VOICE_LANGS = ("ja", "en")
 
 
 class SoundNotFound(Exception):
@@ -118,9 +120,9 @@ class Player:
         return {"builtin": builtin, "system": system, "user": user}
 
     def voices(self) -> list[dict]:
-        """読み上げに使える声。Qwen3-TTS（動いていれば）を先に、次に say の声を日本語から。"""
+        """読み上げに使える声（日本語と英語だけ）。Qwen3-TTS（動いていれば）を先に、次に say の声を日本語から。"""
         extra = self.neural.voices() if self.neural else []
-        return extra + self._say_voices()
+        return [v for v in extra + self._say_voices() if v["locale"].startswith(VOICE_LANGS)]
 
     def _say_voices(self) -> list[dict]:
         if not self.say:

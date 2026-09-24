@@ -550,7 +550,7 @@ function renderVoiceList(box, chosen, onPick, firstTitle) {
   const ja = state.voices.filter((v) => v.locale.startsWith('ja'));
   const other = state.voices.filter((v) => !v.locale.startsWith('ja'));
   if (ja.length) mk('日本語', ja.map((v) => [v.name, v.label || v.name, v.locale]));
-  if (other.length) mk('その他の言語', other.map((v) => [v.name, v.label || v.name, v.locale]));
+  if (other.length) mk('英語', other.map((v) => [v.name, v.label || v.name, v.locale]));
   if (chosen && !state.voices.some((v) => v.name === chosen)) {
     mk('見つからない声', [[chosen, chosen, 'この Mac にありません']]);
   }
