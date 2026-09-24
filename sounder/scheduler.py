@@ -97,6 +97,72 @@ def next_events(schedules: list[dict], *, now: datetime | None = None,
     return [e for _w, e in found[:limit]]
 
 
+def _outcome(sched: dict, when: datetime, tag: str, lead: int,
+             log_entries: list[dict]) -> str | None:
+    """過ぎた発火がどうなったか（fired / skipped / missed）をログから探す。"""
+    label = f"{sched['name']}（{lead}分前の予告）" if tag == "lead" else sched["name"]
+    stamp = f"{when:%m/%d %H:%M}"
+    for e in log_entries:
+        level = e.get("level")
+        if level not in ("fired", "skipped", "missed") or e.get("schedule_id") != sched["id"]:
+            continue
+        msg = e.get("message") or ""
+        if not (msg.startswith(label + " を") or msg.startswith(label + ":")):
+            continue
+        if level == "missed":
+            if stamp in msg:
+                return level
+            continue
+        try:
+            ts = datetime.fromisoformat(e["ts"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        # tick は 1 秒ごとなので、ログの時刻は発火時刻の直後（猶予内）になる
+        if when - timedelta(seconds=5) <= ts <= when + timedelta(seconds=DEFAULT_GRACE + 5):
+            return level
+    return None
+
+
+def timeline(schedules: list[dict], day: date, *, settings: dict,
+             now: datetime | None = None, days: int = 1,
+             log_entries: list[dict] | None = None) -> list[dict]:
+    """day から days 日分の全発火（過ぎたもの・無効な予定・予告を含む）を時刻順に返す。
+
+    発火判定は day_occurrences（= tick / next_events と同じもの）を使う。
+    各要素は next_events と同じキーに、鳴るかどうかの状態を足したもの。
+    """
+    now = now or datetime.now()
+    last = day + timedelta(days=max(1, days) - 1)
+    master = bool(settings.get("master_enabled", True))
+    out: list[tuple[datetime, int, dict]] = []
+    for s in schedules:
+        # 予告は前日にまたがるので、翌日が基準日の分も見る
+        d = day
+        while d <= last + timedelta(days=1):
+            for when, tag, lead in day_occurrences(s, d):
+                if not (day <= when.date() <= last):
+                    continue
+                main_at = when + timedelta(minutes=lead) if tag == "lead" else when
+                enabled = bool(s.get("enabled"))
+                quiet = in_quiet_hours(settings, when)
+                past = when <= now
+                out.append((when, 0 if tag == "lead" else 1, {
+                    "schedule_id": s["id"], "name": s["name"], "tag": tag, "lead": lead,
+                    "at": when.isoformat(timespec="seconds"),
+                    "main_at": main_at.isoformat(timespec="seconds"),
+                    "kind": s["kind"],
+                    "enabled": enabled,
+                    "master": master,
+                    "quiet": quiet,
+                    "past": past,
+                    "will_ring": (not past) and enabled and master and not quiet,
+                    "result": _outcome(s, when, tag, lead, log_entries or []) if past else None,
+                }))
+            d += timedelta(days=1)
+    out.sort(key=lambda x: (x[0], x[1], x[2]["name"]))
+    return [e for _w, _o, e in out]
+
+
 def in_quiet_hours(settings: dict, when: datetime) -> bool:
     q = settings.get("quiet_hours") or {}
     if not q.get("enabled"):

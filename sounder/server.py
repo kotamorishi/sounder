@@ -14,7 +14,7 @@ import socket
 import socketserver
 import sys
 import threading
-from datetime import datetime
+from datetime import date, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -217,6 +217,32 @@ class Handler(BaseHTTPRequestHandler):
                 "playing": app.player.is_playing(),
                 "next_events": sched_mod.next_events(app.store.schedules(), limit=6),
                 "log": app.log.recent(25),
+            })
+            return
+
+        if parts == ["timeline"] and method == "GET":
+            raw = (query.get("date") or [""])[0]
+            try:
+                day = date.fromisoformat(raw) if raw else date.today()
+            except ValueError:
+                raise ValidationError("date は YYYY-MM-DD 形式で指定してください")
+            try:
+                days = int((query.get("days") or [1])[0])
+            except ValueError:
+                raise ValidationError("days は整数で指定してください")
+            if not 1 <= days <= 14:
+                raise ValidationError("days は 1〜14 で指定してください")
+            now = datetime.now()
+            settings = app.store.settings
+            self._json({
+                "date": day.isoformat(),
+                "days": days,
+                "now": now.isoformat(timespec="seconds"),
+                "master_enabled": settings.get("master_enabled", True),
+                "quiet_hours": settings.get("quiet_hours"),
+                "events": sched_mod.timeline(app.store.schedules(), day, settings=settings,
+                                             now=now, days=days,
+                                             log_entries=app.log.recent(300)),
             })
             return
 
