@@ -29,6 +29,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "quiet_hours": {"enabled": False, "start": "23:00", "end": "07:00"},
     "default_voice": "",
     "speak_rate": 180,
+    # 機械学習の声（Qwen3-TTS・AivisSpeech）を、何分使われなかったら休ませるか（0 = 休ませない）
+    "tts_idle_minutes": 30,
 }
 
 
@@ -206,6 +208,9 @@ def validate_settings(raw: Any, current: dict[str, Any]) -> dict[str, Any]:
         out["default_voice"] = (raw["default_voice"] or "").strip()[:80]
     if "speak_rate" in raw:
         out["speak_rate"] = _int_in(raw["speak_rate"], 90, 400, "話す速さ", current["speak_rate"])
+    if "tts_idle_minutes" in raw:
+        out["tts_idle_minutes"] = _int_in(raw["tts_idle_minutes"], 0, 1440, "休ませるまでの時間",
+                                          current["tts_idle_minutes"])
     if "quiet_hours" in raw:
         q = raw["quiet_hours"] or {}
         out["quiet_hours"] = {

@@ -26,14 +26,14 @@ fi
 if curl -sf -m 2 "http://127.0.0.1:8778/speakers" >/dev/null 2>&1; then
   echo "Qwen3-TTS: 応答あり"
 elif launchctl print "gui/$(id -u)/com.local.sounder-tts" >/dev/null 2>&1; then
-  echo "Qwen3-TTS: 起動中（モデルを読み込んでいるか、エラー。data/tts.log を確認）"
+  echo "Qwen3-TTS: 休止中（声が要るときに sounder が起こします）"
 else
   echo "Qwen3-TTS: 未登録（標準の声で読み上げ。scripts/install-tts.sh で登録）"
 fi
 if curl -sf -m 2 "http://127.0.0.1:10101/version" >/dev/null 2>&1; then
   echo "AivisSpeech: 応答あり"
 elif launchctl print "gui/$(id -u)/com.local.sounder-aivis" >/dev/null 2>&1; then
-  echo "AivisSpeech: 起動中（読み込み中か、エラー。data/aivis.log を確認）"
+  echo "AivisSpeech: 休止中（声が要るときに sounder が起こします）"
 else
   echo "AivisSpeech: 未登録（scripts/install-aivis.sh で登録）"
 fi

@@ -34,8 +34,9 @@ cat > "$PLIST" <<PLIST_END
     <string>--port</string>
     <string>$PORT</string>
   </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
+  <!-- 常駐させっぱなしにしない。sounder が必要なときに起こし、使われなくなったら止める -->
+  <key>RunAtLoad</key><false/>
+  <key>KeepAlive</key><false/>
   <key>ProcessType</key><string>Interactive</string>
   <key>StandardOutPath</key><string>$HERE/data/aivis.log</string>
   <key>StandardErrorPath</key><string>$HERE/data/aivis.log</string>
@@ -44,8 +45,16 @@ cat > "$PLIST" <<PLIST_END
 PLIST_END
 
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-echo "AivisSpeech のエンジンを登録しました。起動に 1〜3 分かかります（初回はモデルのダウンロードも）。"
+# 解除した直後は登録に失敗することがあるので、少し待って何度か試す
+i=0
+until launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; do
+  i=$((i + 1))
+  [ $i -ge 10 ] && { echo "登録に失敗しました（launchctl bootstrap）" >&2; exit 1; }
+  sleep 1
+done
+echo "AivisSpeech のエンジンを登録しました。常駐はさせず、声が要るときに sounder が起こします。"
+echo "声の一覧に出すため、いったん起こします（初回はモデルのダウンロードで 1〜3 分かかります）。"
+launchctl kickstart "gui/$(id -u)/$LABEL"
 echo "進み具合: tail -f $HERE/data/aivis.log"
 echo "準備ができると、sounder の声の一覧に「まお・ノーマル（AivisSpeech）」などが出ます。"
 echo "停止・解除は scripts/uninstall-aivis.sh"

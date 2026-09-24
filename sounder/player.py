@@ -125,6 +125,11 @@ class Player:
         extra = [v for e in self.tts for v in e.voices()]
         return [v for v in extra + self._say_voices() if v["locale"].startswith(VOICE_LANGS)]
 
+    def sleep_idle_engines(self, idle_seconds: float) -> None:
+        """しばらく使っていない機械学習のエンジンを止めて、メモリを空ける。"""
+        for e in self.tts:
+            e.sleep_if_idle(idle_seconds)
+
     def _engine_for(self, voice: str):
         return next((e for e in self.tts if e.handles(voice)), None)
 

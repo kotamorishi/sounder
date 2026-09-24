@@ -507,6 +507,15 @@ function renderSettings() {
   $('#quiet-end').value = q.end || '07:00';
   $('#quiet-desc').textContent = SL.describeQuiet(q);
   $('#set-voice-val').textContent = voiceLabel(st.default_voice) || 'システム既定';
+  const neural = state.voices.filter((v) => 'asleep' in v);
+  $('#tts-idle-block').hidden = !neural.length;
+  const idle = String(st.tts_idle_minutes ?? 30);
+  fillSelect($('#set-tts-idle'), TTS_IDLE_OPTIONS, idle);
+  const asleep = neural.length && neural.every((v) => v.asleep);
+  $('#tts-idle-desc').textContent = (idle === '0'
+    ? 'Qwen3-TTS と AivisSpeech はずっと動かしておきます（それぞれメモリを約 3GB 使います）。'
+    : 'しばらく使われなかったら止めてメモリを空け、次に声が要るときに自動で起こします。予定の読み上げは鳴る 3 分前から用意するので、遅れません。')
+    + (asleep ? ' いまは休んでいます。' : '');
   if (!$('#push-voice').hidden) renderVoiceList($('#set-voice-list'), st.default_voice, (v) => { saveSettings({ default_voice: v }, '声を保存しました'); previewSpeech({ voice: v, rate: Number($('#set-rate').value), volume: Number($('#set-volume').value) }); });
 }
 
@@ -984,13 +993,17 @@ function duplicate(s) {
   openEditor(copy, { asNew: true });
 }
 
+const TTS_IDLE_OPTIONS = [['0', '休ませない'], ['10', '10分使わなかったら'], ['30', '30分使わなかったら'],
+  ['60', '1時間使わなかったら'], ['180', '3時間使わなかったら']].map(([value, label]) => ({ value, label }));
+
 /** 読み上げを Mac で試聴する（声・速さを変えたとき）。文章が空なら声の言語に合う見本を読む */
 function previewSpeech({ voice, rate, volume, text }) {
   const v = state.voices.find((x) => x.name === voice);
   const ja = !v || v.locale.startsWith('ja');
   const sample = (text || '').trim() || (ja ? 'お出かけの時間です。' : "It's time to go.");
   api('POST', '/api/preview', { type: 'speak', text: sample, voice: voice || '', rate, volume })
-    .then(() => toast(voice && voice.startsWith('qwen:') ? 'Mac で再生します（声を作るのに数秒かかります）' : 'Mac で再生します'))
+    .then(() => toast(v && v.asleep ? 'Mac で再生します（声のエンジンを起こすので 10 秒ほどかかります）'
+      : v && 'asleep' in v ? 'Mac で再生します（声を作るのに数秒かかります）' : 'Mac で再生します'))
     .catch(fail);
 }
 
@@ -1618,6 +1631,7 @@ function wire() {
       .then(() => toast('再生しました')).catch(fail);
   });
   $('#set-rate').addEventListener('input', (e) => { $('#rate-out').textContent = e.target.value; setRangeFill(e.target); });
+  $('#set-tts-idle').addEventListener('change', (e) => saveSettings({ tts_idle_minutes: Number(e.target.value) }, '保存しました'));
   $('#set-rate').addEventListener('change', (e) => {
     saveSettings({ speak_rate: Number(e.target.value) }, '速さを保存しました');
     previewSpeech({ voice: state.settings.default_voice, rate: Number(e.target.value), volume: Number($('#set-volume').value) });

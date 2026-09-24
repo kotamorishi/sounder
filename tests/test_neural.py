@@ -1,6 +1,7 @@
 """Qwen3-TTS への橋渡しのテスト。モデルの代わりにダミーの HTTP サーバを立てる。"""
 
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -11,6 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# 本物の LaunchAgent（Qwen3-TTS・AivisSpeech）を起こしたり止めたりしない
+os.environ["SOUNDER_MANAGE_TTS"] = "0"
 
 from sounder import config, neural, scheduler  # noqa: E402
 from sounder import player as player_mod  # noqa: E402
@@ -122,7 +125,7 @@ class TestServerDown(unittest.TestCase):
 
     def test_render_returns_none(self):
         self.assertIsNone(self.tts.render("はい", "qwen:ono_anna"))
-        self.assertIn("接続できません", self.msgs[-1][1])
+        self.assertIn("動いていません", self.msgs[-1][1])
 
 
 class TestPlayerWithNeural(ServerMixin, PlayerBase):
@@ -217,8 +220,10 @@ class TestAivis(unittest.TestCase):
 
     def test_each_style_is_a_japanese_voice(self):
         self.assertEqual(self.tts.voices(), [
-            {"name": "aivis:888753760", "label": "まお・ノーマル（AivisSpeech）", "locale": "ja_JP"},
-            {"name": "aivis:888753762", "label": "まお・あまあま（AivisSpeech）", "locale": "ja_JP"},
+            {"name": "aivis:888753760", "label": "まお・ノーマル（AivisSpeech）", "locale": "ja_JP",
+             "asleep": False},
+            {"name": "aivis:888753762", "label": "まお・あまあま（AivisSpeech）", "locale": "ja_JP",
+             "asleep": False},
         ])
 
     def test_render_uses_query_then_synthesis_with_speed(self):
@@ -275,15 +280,110 @@ class TestPlayerWithAivis(PlayerBase):
         self.assertIn("Kyoko", names)
 
 
+FAKE_LAUNCHCTL = """#!/bin/sh
+printf '%s\\n' "$*" >> "{log}"
+exit {code}
+"""
+
+
+class TestEngineLifecycle(unittest.TestCase):
+    """休ませる／起こす。launchctl はダミーのスクリプトに差し替える。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name)
+        self.calls = self.home / "launchctl.log"
+        self.msgs = []
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeAivis)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.addCleanup(self.srv.server_close)
+        self.tts = neural.AivisTTS(self.home / "cache",
+                                   url=f"http://127.0.0.1:{self.srv.server_address[1]}",
+                                   log=lambda lv, m, **k: self.msgs.append(m))
+        self.tts.launchctl = self.fake(0)
+
+    def fake(self, code):
+        path = self.home / f"launchctl{code}"
+        path.write_text(FAKE_LAUNCHCTL.format(log=self.calls, code=code))
+        path.chmod(0o755)
+        return str(path)
+
+    def recorded(self):
+        return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+    def stop_server(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+
+    def test_sleeping_engine_keeps_its_voices_marked_asleep(self):
+        self.assertFalse(self.tts.voices()[0]["asleep"])
+        self.stop_server()
+        v = self.tts.voices()
+        self.assertEqual(v[0]["name"], "aivis:888753760")
+        self.assertTrue(v[0]["asleep"])
+
+    def test_voices_survive_a_sounder_restart(self):
+        self.tts.voices()
+        self.stop_server()
+        again = neural.AivisTTS(self.home / "cache", url="http://127.0.0.1:9")
+        again.launchctl = self.fake(0)
+        self.assertEqual([x["name"] for x in again.voices()],
+                         ["aivis:888753760", "aivis:888753762"])
+
+    def test_unregistered_engine_shows_no_voices(self):
+        self.tts.voices()
+        self.stop_server()
+        self.tts.launchctl = self.fake(1)   # launchctl print が失敗 = 登録なし
+        self.assertEqual(self.tts.voices(), [])
+
+    def test_ensure_up_kickstarts_and_waits(self):
+        answers = iter([False, False, False, True])
+        self.tts.is_up = lambda: next(answers)
+        self.assertTrue(self.tts.ensure_up())
+        self.assertIn(f"kickstart gui/{os.getuid()}/com.local.sounder-aivis", self.recorded())
+        self.assertIn("AivisSpeech を起こしています", self.msgs)
+
+    def test_ensure_up_gives_up_when_not_registered(self):
+        self.tts.is_up = lambda: False
+        self.tts.launchctl = self.fake(1)
+        self.assertFalse(self.tts.ensure_up())
+        self.assertFalse(any("kickstart" in c for c in self.recorded()))
+
+    def test_sleeps_only_after_the_idle_time(self):
+        self.assertFalse(self.tts.sleep_if_idle(600))          # 使ったばかり
+        self.tts.last_used -= 601
+        self.assertFalse(self.tts.sleep_if_idle(0))            # 0 = 休ませない
+        self.assertTrue(self.tts.sleep_if_idle(600))
+        self.assertIn(f"kill SIGTERM gui/{os.getuid()}/com.local.sounder-aivis", self.recorded())
+        # 止める前に声の一覧を覚えている
+        self.assertTrue((self.home / "cache" / "voices-aivis.json").is_file())
+
+    def test_rendering_counts_as_use(self):
+        self.tts.last_used -= 3600
+        self.tts.render("はい", "aivis:888753760", 180)
+        self.assertFalse(self.tts.sleep_if_idle(600))
+
+    def test_no_launchctl_means_no_management(self):
+        self.tts.launchctl = None
+        self.tts.last_used -= 3600
+        self.assertFalse(self.tts.sleep_if_idle(60))
+        self.assertFalse(self.tts.registered())
+
+
 class RecordingPlayer:
     def __init__(self):
         self.prefetched = []
+        self.idle_checks = []
 
     def play(self, action, *, settings, label="", queue=False):
         pass
 
     def prefetch(self, action, *, settings):
         self.prefetched.append(action)
+
+    def sleep_idle_engines(self, idle_seconds):
+        self.idle_checks.append(idle_seconds)
 
 
 class TestSchedulerPrefetch(unittest.TestCase):
@@ -303,6 +403,15 @@ class TestSchedulerPrefetch(unittest.TestCase):
         self.sched.tick(t)
         self.sched.tick(t + timedelta(seconds=31))
         self.assertEqual([a["text"] for a in self.player.prefetched], ["出発の時間です"])
+
+    def test_idle_check_uses_the_setting_once_a_minute(self):
+        self.store.update_settings({"tts_idle_minutes": 10})
+        t = datetime(2026, 9, 21, 7, 0, 0)
+        self.sched._last_tick = t
+        self.sched.tick(t)
+        self.sched.tick(t + timedelta(seconds=30))
+        self.sched.tick(t + timedelta(seconds=61))
+        self.assertEqual(self.player.idle_checks, [600.0, 600.0])
 
     def test_nothing_to_prefetch_far_ahead(self):
         t = datetime(2026, 9, 21, 7, 0, 0)

@@ -17,6 +17,8 @@ DEFAULT_GRACE = 120.0
 # 読み上げを何秒前から作り始めるか（Qwen3-TTS は 1 文に数秒かかる）と、その見回り間隔
 PREFETCH_AHEAD = 180.0
 PREFETCH_EVERY = 30.0
+# 機械学習の声のエンジンを休ませるかどうかの見回り間隔
+IDLE_CHECK_EVERY = 60.0
 
 
 def _minutes(hhmm: str) -> int:
@@ -298,6 +300,7 @@ class Scheduler:
         self._fired: set[str] = set()
         self._prefetched: set[str] = set()
         self._next_prefetch = datetime.min
+        self._next_idle_check = datetime.min
 
     def start(self) -> None:
         self._last_tick = datetime.now()
@@ -336,6 +339,10 @@ class Scheduler:
         if now >= self._next_prefetch:
             self._next_prefetch = now + timedelta(seconds=PREFETCH_EVERY)
             self._prefetch(now, settings)
+        sleep_idle = getattr(self.player, "sleep_idle_engines", None)
+        if sleep_idle and now >= self._next_idle_check:
+            self._next_idle_check = now + timedelta(seconds=IDLE_CHECK_EVERY)
+            sleep_idle(60.0 * settings.get("tts_idle_minutes", 30))
 
     def _prefetch(self, now: datetime, settings: dict) -> None:
         """もうすぐ鳴る予定の読み上げを、再生層に先に作らせる。"""

@@ -4,7 +4,7 @@
 #   scripts/install-tts.sh [ポート]    既定 8778。変えたら sounder に SOUNDER_TTS_URL を渡す
 #
 # Apple Silicon の Mac 専用。初回はモデル（約 4GB）をダウンロードするので時間がかかる。
-# 常駐中はメモリを 3〜4GB ほど使う。止まっていても sounder は標準の声（say）で読み上げる。
+# 動いている間はメモリを 3〜4GB ほど使う（しばらく使われなければ sounder が止める）。止まっていても sounder は標準の声（say）で読み上げる。
 set -e
 
 PORT="${1:-8778}"
@@ -41,8 +41,9 @@ cat > "$PLIST" <<PLIST_END
     <string>$PORT</string>
   </array>
   <key>WorkingDirectory</key><string>$HERE</string>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
+  <!-- 常駐させっぱなしにしない。sounder が必要なときに起こし、使われなくなったら止める -->
+  <key>RunAtLoad</key><false/>
+  <key>KeepAlive</key><false/>
   <key>ProcessType</key><string>Interactive</string>
   <key>StandardOutPath</key><string>$HERE/data/tts.log</string>
   <key>StandardErrorPath</key><string>$HERE/data/tts.log</string>
@@ -53,8 +54,16 @@ cat > "$PLIST" <<PLIST_END
 PLIST_END
 
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-echo "Qwen3-TTS を登録しました。モデルの読み込みに 1 分ほどかかります（初回はダウンロードも）。"
+# 解除した直後は登録に失敗することがあるので、少し待って何度か試す
+i=0
+until launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; do
+  i=$((i + 1))
+  [ $i -ge 10 ] && { echo "登録に失敗しました（launchctl bootstrap）" >&2; exit 1; }
+  sleep 1
+done
+echo "Qwen3-TTS を登録しました。常駐はさせず、声が要るときに sounder が起こします（数秒〜10 秒）。"
+echo "声の一覧に出すため、いったん起こします（初回はモデル約 4GB のダウンロードに時間がかかります）。"
+launchctl kickstart "gui/$(id -u)/$LABEL"
 echo "進み具合: tail -f $HERE/data/tts.log"
 echo "準備ができると、sounder の声の一覧に「Ono Anna（Qwen3-TTS）」などが出ます。"
 echo "停止・解除は scripts/uninstall-tts.sh"
