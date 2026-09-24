@@ -416,7 +416,7 @@ function renderSounds() {
     const items = (state.sounds[key] || []).filter((s) => SL.matchText(q, soundFields(s, title)));
     if (!items.length && (key !== 'user' || q)) continue;
     if (key === 'effects' || key === 'random') {
-      const blocks = foldedBlocks(title, items, (s) => soundRow(s, false), q ? () => true : null);
+      const blocks = foldedBlocks(title, items, (s) => soundRow(s, false), q ? () => true : null, 'sounds');
       blocks[blocks.length - 1].append(el('p', 'footnote', notes[key]));
       res.append(...blocks);
       continue;
@@ -479,8 +479,12 @@ function notFound(res) {
 
 const soundFields = (s, title) => [s.label, s.sub, s.category, title, s.ref];
 
-/** 効果音・ランダムのように数が多い組は、分類ごとに折りたたむ。open に入っている分類は開いておく */
-function foldedBlocks(title, items, makeRow, open) {
+// 開いている折りたたみ（'一覧|組:分類'）。描き直しても開いたままにする
+const openFolds = new Set();
+
+/** 効果音・ランダムのように数が多い組は、分類ごとに折りたたむ。
+    ユーザーが開いた分類と、open(list) が true の分類は開いておく */
+function foldedBlocks(title, items, makeRow, open, listKey = '') {
   const cats = [];
   const byCat = {};
   for (const s of items) {
@@ -490,14 +494,17 @@ function foldedBlocks(title, items, makeRow, open) {
   }
   return cats.map((c) => {
     const d = el('details', 'group-block fold');
-    if (open && open(byCat[c])) d.open = true;
+    const key = `${listKey}|${title}:${c}`;
+    if (openFolds.has(key) || (open && open(byCat[c]))) d.open = true;
     const sum = el('summary', 'group-head');
     sum.append(el('span', null, `${title}：${c}`), el('span', 'fold-n', `${byCat[c].length}`));
     const g = el('div', 'group');
     // 開いたときに初めて行を作る（数百行を一度に作らない）
     const fill = () => { if (!g.childElementCount) for (const s of byCat[c]) g.append(makeRow(s)); };
     if (d.open) fill();
-    d.addEventListener('toggle', () => { if (d.open) fill(); });
+    d.addEventListener('toggle', () => {
+      if (d.open) { openFolds.add(key); fill(); } else openFolds.delete(key);
+    });
     d.append(sum, g);
     return d;
   });
@@ -554,8 +561,22 @@ function setSoundEdit(on) {
 
 function markPlaying(ref) {
   playingRef = ref;
-  renderSounds();
+  updatePlayingRows();
   if (ref) watchPlaying();
+}
+
+/** 再生中の印を付け替える。一覧は作り直さず、変わった行だけ差し替える */
+function updatePlayingRows() {
+  const all = {};
+  for (const [key, items] of Object.entries(state.sounds || {})) {
+    for (const s of items || []) all[s.ref] = [s, key === 'user'];
+  }
+  document.querySelectorAll('#sound-groups .sound-row').forEach((row) => {
+    const hit = all[row.dataset.ref];
+    if (hit && row.classList.contains('is-playing') !== (playingRef === row.dataset.ref)) {
+      row.replaceWith(soundRow(...hit));
+    }
+  });
 }
 
 let playWatch = null;
@@ -566,7 +587,7 @@ function watchPlaying() {
     try {
       const data = await api('GET', '/api/now');
       applyNow(data);
-      if (!data.playing && Date.now() - started > 1200) { playingRef = null; renderSounds(); return; }
+      if (!data.playing && Date.now() - started > 1200) { playingRef = null; updatePlayingRows(); return; }
     } catch { /* 次で見る */ }
     if (Date.now() - started < 10 * 60 * 1000) playWatch = setTimeout(check, 1500);
   };
@@ -1432,7 +1453,7 @@ function renderSoundPage() {
     if (!items.length) continue;
     if (key === 'effects' || key === 'random') {
       res.append(...foldedBlocks(title, items, (s) => mkRow(s.ref, s.label),
-        (list) => !!q || list.some((s) => s.ref === chosen)));
+        (list) => !!q || list.some((s) => s.ref === chosen), 'pick'));
       continue;
     }
     const block = el('div', 'group-block');
