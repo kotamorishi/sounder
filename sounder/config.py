@@ -31,6 +31,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "speak_rate": 180,
     # 機械学習の声（Qwen3-TTS・AivisSpeech）を、何分使われなかったら休ませるか（0 = 休ませない）
     "tts_idle_minutes": 30,
+    # カレンダー連携（calendarfeed.DEFAULTS）。ここに無い項目は起動時に読み捨てられるので必ず並べる
+    "calendar": dict(calendarfeed.DEFAULTS),
 }
 
 

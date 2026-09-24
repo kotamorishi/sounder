@@ -118,6 +118,20 @@ class TestFiring(Base):
 
 
 class TestSettings(unittest.TestCase):
+    def test_calendar_setting_survives_a_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            config.Store(path).update_settings({"calendar": {"enabled": True, "calendars": ["x"]}})
+            again = config.Store(path).settings["calendar"]
+            self.assertEqual((again["enabled"], again["calendars"]), (True, ["x"]))
+
+    def test_every_setting_key_survives_a_restart(self):
+        """起動時に知らない項目を読み捨てるので、設定の項目は全部 DEFAULT_SETTINGS に並べておく"""
+        import re
+        src = (Path(config.__file__)).read_text()
+        keys = set(re.findall(r'if "(\w+)" in raw:', src.split("def validate_settings")[1]))
+        self.assertLessEqual(keys, set(config.DEFAULT_SETTINGS))
+
     def test_validate(self):
         cur = dict(config.DEFAULT_SETTINGS)
         out = config.validate_settings({"calendar": {"enabled": True, "calendars": ["a", "a", "b"],
