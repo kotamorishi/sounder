@@ -109,6 +109,18 @@ class TestResolve(Base):
             self.skipTest("システムサウンドが無い環境")
         self.assertEqual(self.p.resolve("system:Ping"), real)
 
+    def test_system_sound_from_the_sound_folders(self):
+        """/System/Library/Sounds の無い環境（Linux など）でも、探し方を確かめる。"""
+        folder = self.home / "sys"
+        folder.mkdir()
+        (folder / "Ping.aiff").write_bytes(b"FORM")
+        real = player_mod.SYSTEM_SOUND_DIRS
+        player_mod.SYSTEM_SOUND_DIRS = (self.home / "ない", folder)
+        try:
+            self.assertEqual(self.p.resolve("system:Ping"), folder / "Ping.aiff")
+        finally:
+            player_mod.SYSTEM_SOUND_DIRS = real
+
     def test_system_unknown_and_unsafe(self):
         with self.assertRaises(player_mod.SoundNotFound):
             self.p.resolve("system:NoSuchSound")
@@ -155,6 +167,12 @@ class TestVoices(Base):
         voices = self.p.voices()
         self.assertEqual([v["name"] for v in voices], ["Kyoko", "Alex"])
         self.assertEqual(voices[0]["locale"], "ja_JP")
+
+    def test_duplicate_voice_names_are_listed_once(self):
+        self.p.say = self._script("say2", "#!/bin/sh\n"
+                                  "printf 'Kyoko   ja_JP    # a\\n'\n"
+                                  "printf 'Kyoko   ja_JP    # b\\n'\n")
+        self.assertEqual([v["name"] for v in self.p.voices()], ["Kyoko"])
 
     def test_no_say_command(self):
         self.p.say = None

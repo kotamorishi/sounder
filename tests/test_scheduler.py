@@ -208,3 +208,57 @@ class TestCalendarDays(unittest.TestCase):
     def test_defaults_to_now(self):
         days = scheduler.calendar_days([], date.today(), 1)
         self.assertTrue(days[0]["is_today"])
+
+    def test_lead_before_midnight_belongs_to_the_main_day(self):
+        """0 時台の予定の予告は前日の時刻を持つ（画面側で時刻の日付に振り分ける）。"""
+        s = sched(time="00:10", days=[1], lead_times=[30])  # 火曜 0:10 → 月曜 23:40 に予告
+        days = scheduler.calendar_days([s], date(2026, 9, 21), 2, now=datetime(2026, 9, 20))
+        self.assertEqual(days[0]["events"], [])
+        self.assertEqual([e["at"] for e in days[1]["events"]],
+                         ["2026-09-21T23:40:00", "2026-09-22T00:10:00"])
+
+
+class TestOutcome(unittest.TestCase):
+    """過ぎた予定がどうなったかを、実行ログから読み取る。"""
+
+    def setUp(self):
+        self.s = sched(name="朝", time="07:00", days=[0, 1, 2, 3, 4, 5, 6], lead_times=[5])
+
+    def entry(self, ts, level, message, sid=None):
+        return {"ts": ts, "level": level, "message": message,
+                "schedule_id": self.s["id"] if sid is None else sid}
+
+    def results(self, log, day=date(2026, 9, 21), now=datetime(2026, 9, 21, 8, 0)):
+        events = scheduler.calendar_days([self.s], day, 1, now=now, log_entries=log)[0]["events"]
+        return [e["result"] for e in events]
+
+    def test_fired_and_skipped(self):
+        log = [
+            self.entry("2026-09-21T06:55:00", "fired", "朝（5分前の予告） を再生しました"),
+            self.entry("2026-09-21T07:00:01", "skipped", "朝: 禁止時間のためスキップしました"),
+        ]
+        self.assertEqual(self.results(log), ["fired", "skipped"])
+
+    def test_other_days_and_other_entries_are_ignored(self):
+        log = [
+            self.entry("2026-09-20T07:00:00", "fired", "朝 を再生しました"),      # 前日
+            self.entry("2026-09-21T07:00:00", "info", "朝 を更新しました"),        # 種類が違う
+            self.entry("2026-09-21T07:00:00", "fired", "朝 を再生しました", "x"),  # 別の予定
+            self.entry("2026-09-21T07:00:00", "fired", "朝ごはん を再生しました"),  # 名前が違う
+            self.entry("めちゃくちゃ", "fired", "朝 を再生しました"),               # 時刻が読めない
+            {"level": "fired", "message": "朝 を再生しました", "schedule_id": self.s["id"]},
+        ]
+        self.assertEqual(self.results(log), [None, None])
+
+    def test_missed_is_matched_by_the_stamp_in_the_message(self):
+        log = [
+            self.entry("2026-09-21T09:30:00", "missed",
+                       "朝: 09/20 07:00 の予定を過ぎていたため鳴らしませんでした（150分遅れ）"),
+            self.entry("2026-09-21T09:30:00", "missed",
+                       "朝: 09/21 07:00 の予定を過ぎていたため鳴らしませんでした（150分遅れ）"),
+        ]
+        self.assertEqual(self.results(log, now=datetime(2026, 9, 21, 10, 0)), [None, "missed"])
+
+    def test_future_events_have_no_result(self):
+        log = [self.entry("2026-09-21T07:00:00", "fired", "朝 を再生しました")]
+        self.assertEqual(self.results(log, now=datetime(2026, 9, 21, 6, 0)), [None, None])

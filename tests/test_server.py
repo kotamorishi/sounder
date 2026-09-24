@@ -12,7 +12,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from http.client import HTTPConnection
 from pathlib import Path
 
@@ -180,6 +180,35 @@ class TestStatic(ServerCase):
     def test_post_to_static_path_is_not_found(self):
         self.err("POST", "/index.html", {}, expect=404)
 
+    def test_bundled_fonts_are_served_with_a_long_cache(self):
+        for w in ("Light", "Regular", "Medium", "Bold"):
+            code, body, res = self.req("GET", f"/fonts/MPLUSRounded1c-{w}.woff2")
+            self.assertEqual(code, 200, w)
+            self.assertEqual(res.headers["Content-Type"], "font/woff2")
+            self.assertEqual(res.headers["Cache-Control"], "public, max-age=31536000, immutable")
+            self.assertEqual(body[:4], b"wOF2")
+            self.assertEqual(int(res.headers["Content-Length"]), len(body))
+
+    def test_font_license_is_served(self):
+        code, body, res = self.req("GET", "/fonts/OFL.txt")
+        self.assertEqual(code, 200)
+        self.assertTrue(res.headers["Content-Type"].startswith("text/plain"))
+        self.assertIn(b"SIL Open Font License", body)
+
+    def test_other_font_types_are_known(self):
+        for suffix, ctype in ((".woff", "font/woff"), (".ttf", "font/ttf")):
+            self.assertEqual(server_mod.EXTRA_TYPES[suffix], ctype)
+
+    def test_only_fonts_get_the_long_cache(self):
+        for path in ("/", "/style.css", "/app.js", "/lib.js", "/icon-180.png",
+                     "/fonts/../style.css"):
+            code, _b, res = self.req("GET", path)
+            self.assertEqual(code, 200, path)
+            self.assertEqual(res.headers["Cache-Control"], "no-store", path)
+
+    def test_missing_font(self):
+        self.err("GET", "/fonts/nope.woff2", expect=404)
+
 
 class TestState(ServerCase):
     def test_state_has_everything_the_ui_needs(self):
@@ -300,6 +329,19 @@ class TestCalendar(ServerCase):
 
     def test_bad_start(self):
         self.assertIn("YYYY-MM-DD", self.err("GET", "/api/calendar?start=9/21")["error"])
+
+    def test_reports_master_switch_and_past_results(self):
+        now = datetime.now()
+        s = self.ok("POST", "/api/schedules", self.sample(
+            days=[0, 1, 2, 3, 4, 5, 6], lead_times=[], time=f"{now:%H:%M}"))["schedule"]
+        self.app.log("fired", "お出かけ を再生しました", schedule_id=s["id"])  # いま鳴った
+        self.ok("PUT", "/api/settings", {"master_enabled": False})
+        d = self.ok("GET", f"/api/calendar?start={now:%Y-%m-%d}&days=1")
+        self.assertIs(d["master_enabled"], False)
+        self.assertIn("quiet_hours", d)
+        ev = d["days"][0]["events"][0]
+        self.assertTrue(ev["past"])
+        self.assertEqual(ev["result"], "fired")
 
     def test_marks_quiet_and_disabled(self):
         self.ok("PUT", "/api/settings",
@@ -469,6 +511,26 @@ class TestToken(ServerCase):
         self.assertIn("合言葉", body)
         self.assertIn("text/html", cm.exception.headers["Content-Type"])
 
+    def test_unlock_screen_can_load_fonts_and_icons(self):
+        for path in ("/fonts/MPLUSRounded1c-Regular.woff2", "/icon-180.png",
+                     "/manifest.webmanifest"):
+            r = urllib.request.Request(self.base + path)
+            with urllib.request.urlopen(r, timeout=10) as res:
+                self.assertEqual(res.status, 200, path)
+
+    def test_public_files_do_not_open_the_rest(self):
+        for path in ("/fonts/../app.js", "/fonts/%2e%2e/index.html", "/app.js"):
+            r = urllib.request.Request(self.base + path)
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(r, timeout=10)
+            self.assertEqual(cm.exception.code, 401, path)
+            cm.exception.close()
+        r = urllib.request.Request(self.base + "/fonts/x", data=b"{}", method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(r, timeout=10)
+        self.assertEqual(cm.exception.code, 401)
+        cm.exception.close()
+
     def test_writes_still_need_the_token(self):
         r = urllib.request.Request(self.base + "/api/schedules", data=b"{}", method="POST")
         with self.assertRaises(urllib.error.HTTPError) as cm:
@@ -548,6 +610,9 @@ class TestDefaultVoice(unittest.TestCase):
 
     def test_picks_kyoko_when_unset(self):
         app, _calls = make_app(Path(self.tmp.name) / "a", voice="")
+        if not app.store.settings["default_voice"]:
+            # say の無い環境（Linux など）では起動時に選べないので、偽の say で選び直させる
+            app._pick_default_voice()
         self.assertEqual(app.store.settings["default_voice"], "Kyoko (Japanese (Japan))")
 
     def test_leaves_it_empty_when_no_japanese_voice_exists(self):
