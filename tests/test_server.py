@@ -139,12 +139,32 @@ class TestStatic(ServerCase):
         self.assertEqual(res.headers["Cache-Control"], "no-store")
         self.assertEqual(res.headers["X-Content-Type-Options"], "nosniff")
 
+    def test_serves_icons_and_manifest(self):
+        for path, ctype in (("/icon-180.png", "image/png"),
+                            ("/icon-512.png", "image/png"),
+                            ("/manifest.webmanifest", "application/manifest+json")):
+            code, body, res = self.req("GET", path)
+            self.assertEqual(code, 200, path)
+            self.assertEqual(res.headers["Content-Type"], ctype, path)
+            self.assertTrue(body)
+
     def test_serves_css_and_js(self):
         for path, ctype in (("/style.css", "text/css"), ("/app.js", "javascript"),
                             ("/lib.js", "javascript")):
             code, _b, res = self.req("GET", path)
             self.assertEqual(code, 200, path)
             self.assertIn(ctype, res.headers["Content-Type"])
+
+    def test_unknown_file_type_is_served_as_bytes(self):
+        odd = self.app.web_dir / "_test_file.zzz"
+        odd.write_bytes(b"\x00binary")
+        try:
+            code, body, res = self.req("GET", "/_test_file.zzz")
+        finally:
+            odd.unlink()
+        self.assertEqual(code, 200)
+        self.assertEqual(res.headers["Content-Type"], "application/octet-stream")
+        self.assertEqual(body, b"\x00binary")
 
     def test_head_request(self):
         code, body, _res = self.req("HEAD", "/")
@@ -439,6 +459,36 @@ class TestToken(ServerCase):
     def test_wrong_token_is_rejected(self):
         code, _b, _r = self.req("GET", "/api/state", headers={"X-Sounder-Token": "chigau"})
         self.assertEqual(code, 401)
+
+    def test_page_without_a_token_shows_the_unlock_screen(self):
+        r = urllib.request.Request(self.base + "/")
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(r, timeout=10)
+        self.assertEqual(cm.exception.code, 401)
+        body = cm.exception.read().decode("utf-8")
+        self.assertIn("合言葉", body)
+        self.assertIn("text/html", cm.exception.headers["Content-Type"])
+
+    def test_writes_still_need_the_token(self):
+        r = urllib.request.Request(self.base + "/api/schedules", data=b"{}", method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(r, timeout=10)
+        self.assertEqual(cm.exception.code, 401)
+
+    def test_falls_back_to_json_without_the_unlock_page(self):
+        moved = self.home / "unlock.html.bak"
+        page = self.app.web_dir / "unlock.html"
+        real = page.read_bytes()
+        moved.write_bytes(real)
+        page.unlink()
+        try:
+            r = urllib.request.Request(self.base + "/")
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(r, timeout=10)
+            self.assertEqual(cm.exception.code, 401)
+            self.assertIn("json", cm.exception.headers["Content-Type"])
+        finally:
+            page.write_bytes(real)
 
     def test_page_with_token_sets_a_cookie(self):
         code, _b, res = self.req("GET", "/?t=himitsu")

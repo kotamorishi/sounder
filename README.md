@@ -8,6 +8,13 @@ Mac mini を「時間になったら音を鳴らす箱」にする小さなツ�
 - **追加インストール不要。** macOS の python3 / `afplay` / `say` だけで動きます（pip も不要）。
 - 待ち受けは既定で `127.0.0.1` のみ。同じ Mac のブラウザからしか開けません。
 
+<p align="center">
+  <img src="docs/screenshot-phone.png" alt="スマホの週カレンダー" width="260">
+  <img src="docs/screenshot-editor.png" alt="予定の編集画面" width="260">
+</p>
+
+![Mac の予定一覧](docs/screenshot-mac.png)
+
 ## すぐ使う
 
 ```sh
@@ -103,7 +110,11 @@ python3 -m sounder --host 0.0.0.0 --port 8777 --print-token
 ```
 
 表示された `http://<MacのIP>:8777/?t=xxxx` を開くと、以後はブラウザが合言葉を覚えます。
-ホーム画面に追加すればアプリのように開けます。
+合言葉を忘れたブラウザで開くと、入力欄だけの小さな画面が出ます。
+
+iPhone なら Safari の共有 →「ホーム画面に追加」でアプリのように開けます
+（アイコンは `python3 -m sounder.icon web` で作った PNG を使っています）。
+
 HTTPS ではないので、信頼できる自宅の LAN 以外では使わないでください。
 
 ## ファイルの置き場所
@@ -115,12 +126,15 @@ sounder/           アプリ本体
   player.py        afplay / say の呼び出し
   scheduler.py     いつ鳴らすかの計算と 1 秒ごとの判定
   eventlog.py      実行ログ
+  icon.py          アイコン PNG の生成
   server.py        HTTP サーバ（API と画面の配信）
 web/               画面（外部CDNなし）
   index.html       画面の骨組み
   style.css        見た目（スマホ幅を基準に、720px 以上で広がる）
   lib.js           日付や表示文字列の純関数（テスト対象）
   app.js           画面の組み立てとサーバとのやりとり
+  unlock.html      合言葉の入力画面
+  icon-*.png       ホーム画面用のアイコン（sounder/icon.py で生成）
 sounds/builtin/    自動生成されるチャイム
 sounds/user/       アップロードした音
 data/config.json   予定と設定（これだけバックアップすれば復元できます）

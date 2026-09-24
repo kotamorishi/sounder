@@ -30,6 +30,8 @@ from .scheduler import Scheduler
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024   # 1 ファイルの上限
 MAX_BODY = MAX_UPLOAD_BYTES * 4 // 3 + 1024 * 1024  # base64 化した分の余裕を見る
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+# mimetypes が知らない拡張子を補う
+EXTRA_TYPES = {".webmanifest": "application/manifest+json"}
 
 
 class App:
@@ -168,7 +170,10 @@ class Handler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
         try:
             if not self._authorized(query):
-                self._error(HTTPStatus.UNAUTHORIZED, "トークンが必要です")
+                if path.startswith("/api/") or method != "GET":
+                    self._error(HTTPStatus.UNAUTHORIZED, "合言葉が必要です")
+                else:
+                    self._unlock_page()   # 画面を開こうとした人には入力欄を出す
                 return
             if method != "GET" and not self._same_origin():
                 self._error(HTTPStatus.FORBIDDEN, "リクエスト元が不正です")
@@ -191,6 +196,14 @@ class Handler(BaseHTTPRequestHandler):
             self.app.log("error", f"{method} {path} で例外: {exc!r}")
             self._error(HTTPStatus.INTERNAL_SERVER_ERROR, f"サーバ内部エラー: {exc}")
 
+    def _unlock_page(self) -> None:
+        """合言葉が無いときに出す小さな入力画面。"""
+        page = self.app.web_dir / "unlock.html"
+        if not page.is_file():
+            self._error(HTTPStatus.UNAUTHORIZED, "合言葉が必要です")
+            return
+        self._send(HTTPStatus.UNAUTHORIZED, page.read_bytes(), "text/html; charset=utf-8")
+
     # --- 静的ファイル -----------------------------------------------------
 
     def _static(self, path: str, query: dict) -> None:
@@ -203,7 +216,9 @@ class Handler(BaseHTTPRequestHandler):
         if not target.is_file():
             self._error(HTTPStatus.NOT_FOUND, "ページがありません")
             return
-        ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        ctype = (EXTRA_TYPES.get(target.suffix)
+                 or mimetypes.guess_type(target.name)[0]
+                 or "application/octet-stream")
         if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
             ctype += "; charset=utf-8"
         extra = {}

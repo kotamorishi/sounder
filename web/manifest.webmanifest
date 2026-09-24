@@ -1,0 +1,16 @@
+{
+  "name": "sounder",
+  "short_name": "sounder",
+  "description": "時間になったらチャイムやメロディーを鳴らします",
+  "lang": "ja",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f6f3",
+  "theme_color": "#b4551f",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
