@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -119,26 +120,43 @@ class Player:
                                  text=True, timeout=15).stdout
         except (OSError, subprocess.SubprocessError):
             return []
-        voices = []
+        voices, seen = [], set()
         for line in out.splitlines():
-            m = re.match(r"^(.+?)\s{2,}([a-z]{2}[_-][A-Z]{2})\s", line)
-            if m:
-                voices.append({"name": m.group(1).strip(), "locale": m.group(2)})
+            # 例: "Kyoko (Japanese (Japan)) ja_JP    # こんにちは"
+            # 名前に空白が入るものがあるので、ロケールと # を手がかりに切り出す
+            m = re.match(r"^(.*?)\s+([a-z]{2,3}(?:[_-][A-Za-z]{2,4})?)\s*#", line)
+            if not m:
+                continue
+            name = m.group(1).strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            voices.append({"name": name, "locale": m.group(2)})
         voices.sort(key=lambda v: (not v["locale"].startswith("ja"), v["name"].lower()))
         return voices
 
     # --- 再生 -------------------------------------------------------------
+
+    def _signal_group(self, proc: subprocess.Popen, sig: int) -> None:
+        """プロセスグループごと止める。afplay が子を持つ場合も取り残さない。"""
+        try:
+            os.killpg(os.getpgid(proc.pid), sig)
+        except OSError:
+            try:
+                proc.send_signal(sig)
+            except OSError:
+                pass
 
     def stop(self) -> None:
         with self._lock:
             self._job += 1
             proc, self._proc = self._proc, None
         if proc and proc.poll() is None:
-            proc.terminate()
+            self._signal_group(proc, signal.SIGTERM)
             try:
                 proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                self._signal_group(proc, signal.SIGKILL)
 
     def is_playing(self) -> bool:
         with self._lock:
@@ -153,14 +171,18 @@ class Player:
             self._log("error", f"再生に失敗しました: {exc}")
             return False
         with self._lock:
-            if job != self._job:
-                proc.terminate()
-                return False
-            self._proc = proc
+            stale = job != self._job
+            if not stale:
+                self._proc = proc
+        if stale:  # 待っている間に別の再生が始まっていた
+            self._signal_group(proc, signal.SIGTERM)
+            proc.communicate()
+            return False
         try:
             _out, err = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            self._signal_group(proc, signal.SIGKILL)
+            proc.communicate()  # 後始末（パイプを閉じてゾンビを残さない）
             self._log("error", "再生が長すぎるため停止しました")
             return False
         finally:

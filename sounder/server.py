@@ -14,7 +14,7 @@ import socket
 import socketserver
 import sys
 import threading
-from datetime import datetime
+from datetime import date, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,7 +27,8 @@ from .eventlog import EventLog
 from .player import Player, SoundNotFound
 from .scheduler import Scheduler
 
-MAX_BODY = 40 * 1024 * 1024  # アップロードを含むので少し大きめ
+MAX_UPLOAD_BYTES = 30 * 1024 * 1024   # 1 ファイルの上限
+MAX_BODY = MAX_UPLOAD_BYTES * 4 // 3 + 1024 * 1024  # base64 化した分の余裕を見る
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 
 
@@ -49,6 +50,17 @@ class App:
         self.scheduler = Scheduler(self.store, self.player, self.log)
         self.token = token
         self.started_at = datetime.now()
+        self._pick_default_voice()
+
+    def _pick_default_voice(self) -> None:
+        """読み上げの声が未設定なら、日本語の声を選んでおく。"""
+        if self.store.settings.get("default_voice"):
+            return
+        ja = [v["name"] for v in self.player.voices() if v["locale"].startswith("ja")]
+        if not ja:
+            return
+        kyoko = [n for n in ja if n.startswith("Kyoko")]
+        self.store.update_settings({"default_voice": (kyoko or ja)[0]})
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -220,6 +232,20 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if parts == ["calendar"] and method == "GET":
+            start = (query.get("start") or [""])[0]
+            try:
+                first = date.fromisoformat(start) if start else date.today()
+            except ValueError:
+                raise ValidationError("start は YYYY-MM-DD 形式で指定してください")
+            span = min(31, max(1, int((query.get("days") or [7])[0] or 7)))
+            self._json({
+                "start": first.isoformat(),
+                "days": sched_mod.calendar_days(
+                    app.store.schedules(), first, span, settings=app.store.settings),
+            })
+            return
+
         if parts == ["settings"] and method in ("PUT", "PATCH"):
             self._json({"settings": app.store.update_settings(self._json_body())})
             return
@@ -313,8 +339,9 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValidationError("ファイルの内容を読めませんでした")
                 if not data:
                     raise ValidationError("ファイルが空です")
-                if len(data) > 30 * 1024 * 1024:
-                    raise ValidationError("30MB 以下のファイルにしてください")
+                if len(data) > MAX_UPLOAD_BYTES:
+                    raise ValidationError(
+                        f"{MAX_UPLOAD_BYTES // (1024 * 1024)}MB 以下のファイルにしてください")
                 info = app.player.save_upload(name, data)
                 app.log("info", f"サウンド {info['label']} を追加しました")
                 self._json({"sound": info, "sounds": app.player.library()},
@@ -357,9 +384,8 @@ class Handler(BaseHTTPRequestHandler):
         }
 
 
-def serve(home: Path, host: str, port: int, token: str | None) -> int:
-    app = App(home, token)
-    Handler.app = app
+def make_server(app: App, host: str, port: int) -> ThreadingHTTPServer:
+    """app に紐付いた HTTP サーバを作る（テストからも使う）。"""
 
     class Server(ThreadingHTTPServer):
         daemon_threads = True
@@ -373,8 +399,15 @@ def serve(home: Path, host: str, port: int, token: str | None) -> int:
             self.server_name = self.server_address[0]
             self.server_port = self.server_address[1]
 
+    # ハンドラごとに app を束ねる（1 プロセスで複数立てられるようにする）
+    bound = type("BoundHandler", (Handler,), {"app": app})
+    return Server((host, port), bound)
+
+
+def serve(home: Path, host: str, port: int, token: str | None) -> int:
+    app = App(home, token)
     try:
-        httpd = Server((host, port), Handler)
+        httpd = make_server(app, host, port)
     except OSError as exc:
         print(f"[sounder] {host}:{port} を開けませんでした: {exc}", file=sys.stderr)
         return 1
@@ -389,10 +422,7 @@ def serve(home: Path, host: str, port: int, token: str | None) -> int:
         print("[sounder] 警告: ローカル以外に公開しています。--token の利用を検討してください。",
               file=sys.stderr)
 
-    stop = threading.Event()
-
     def shutdown(_sig=None, _frm=None):
-        stop.set()
         threading.Thread(target=httpd.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGINT, shutdown)

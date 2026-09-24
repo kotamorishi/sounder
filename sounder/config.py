@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 import json
 import os
 import re
@@ -13,7 +14,10 @@ from typing import Any
 
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-KINDS = ("daily", "once", "interval")
+KINDS = ("weekly", "monthly", "yearly", "once", "interval")
+# 旧名（v0.1 の設定ファイル）を読み込めるようにする
+KIND_ALIASES = {"daily": "weekly"}
+LAST_DAY = "last"  # 「毎月末」を表す day_of_month の値
 ACTION_TYPES = ("sound", "speak", "both")
 
 DEFAULT_SETTINGS: dict[str, Any] = {
@@ -21,7 +25,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "master_enabled": True,
     # 静音時間帯：この範囲に入る通知はスキップする（深夜の誤作動対策）
     "quiet_hours": {"enabled": False, "start": "23:00", "end": "07:00"},
-    "default_voice": "Kyoko",
+    "default_voice": "",
     "speak_rate": 180,
 }
 
@@ -70,14 +74,36 @@ def _int_in(v: Any, lo: int, hi: int, label: str, fallback: int | None = None) -
     return i
 
 
+def _days(value: Any, *, required: bool) -> list[int]:
+    """曜日の配列を検証する。required でなければ空なら毎日扱い。"""
+    if not isinstance(value, list) or not value:
+        if required:
+            raise ValidationError("曜日を 1 つ以上選んでください")
+        return [0, 1, 2, 3, 4, 5, 6]
+    return sorted({_int_in(d, 0, 6, "曜日") for d in value})
+
+
+def _day_of_month(value: Any) -> int | str:
+    """1〜31、または「月末」を表す 'last'。"""
+    if value == LAST_DAY:
+        return LAST_DAY
+    return _int_in(value, 1, 31, "日")
+
+
+def _check_real_date(month: int, day: int) -> None:
+    """2月30日のような存在しない日付を弾く（うるう年は許す）。"""
+    if day > calendar.monthrange(2024, month)[1]:  # 2024 はうるう年
+        raise ValidationError(f"{month}月{day}日は存在しません")
+
+
 def validate_schedule(raw: Any, *, keep_id: str | None = None) -> dict[str, Any]:
     """Web UI から来たスケジュールを検証して正規化する。"""
     if not isinstance(raw, dict):
         raise ValidationError("スケジュールの形式が不正です")
 
-    kind = raw.get("kind")
+    kind = KIND_ALIASES.get(raw.get("kind"), raw.get("kind"))
     if kind not in KINDS:
-        raise ValidationError("種別は daily / once / interval のいずれかです")
+        raise ValidationError("繰り返し方の指定が不正です")
 
     s: dict[str, Any] = {
         "id": keep_id or raw.get("id") or uuid.uuid4().hex[:12],
@@ -87,13 +113,18 @@ def validate_schedule(raw: Any, *, keep_id: str | None = None) -> dict[str, Any]
         "note": (raw.get("note") or "").strip()[:500],
     }
 
-    if kind == "daily":
+    if kind == "weekly":
         s["time"] = _time(raw.get("time"), "時刻")
-        days = raw.get("days")
-        if not isinstance(days, list) or not days:
-            raise ValidationError("曜日を 1 つ以上選んでください")
-        norm = sorted({_int_in(d, 0, 6, "曜日") for d in days})
-        s["days"] = norm
+        s["days"] = _days(raw.get("days"), required=True)
+    elif kind == "monthly":
+        s["time"] = _time(raw.get("time"), "時刻")
+        s["day_of_month"] = _day_of_month(raw.get("day_of_month"))
+    elif kind == "yearly":
+        s["time"] = _time(raw.get("time"), "時刻")
+        s["month"] = _int_in(raw.get("month"), 1, 12, "月")
+        s["day_of_month"] = _day_of_month(raw.get("day_of_month"))
+        if s["day_of_month"] != LAST_DAY:
+            _check_real_date(s["month"], s["day_of_month"])
     elif kind == "once":
         d = raw.get("date")
         if not isinstance(d, str) or not DATE_RE.match(d):
@@ -111,11 +142,7 @@ def validate_schedule(raw: Any, *, keep_id: str | None = None) -> dict[str, Any]
         end = _time(win.get("end", "21:00"), "終了時刻")
         s["window"] = {"start": start, "end": end}
         s["anchor"] = _time(raw.get("anchor", start), "基準時刻")
-        days = raw.get("days")
-        if isinstance(days, list) and days:
-            s["days"] = sorted({_int_in(d, 0, 6, "曜日") for d in days})
-        else:
-            s["days"] = [0, 1, 2, 3, 4, 5, 6]
+        s["days"] = _days(raw.get("days"), required=False)
 
     # 事前予告（お出かけ 10 分前など）
     leads = raw.get("lead_times") or []
@@ -234,10 +261,6 @@ class Store:
         return {"version": 1, "settings": settings, "schedules": schedules}
 
     # --- 読み取り ---------------------------------------------------------
-
-    def snapshot(self) -> dict[str, Any]:
-        with self._lock:
-            return json.loads(json.dumps(self._data))
 
     @property
     def settings(self) -> dict[str, Any]:

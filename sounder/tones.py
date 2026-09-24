@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import array
 import math
-import struct
+import sys
 import wave
 from pathlib import Path
 
@@ -263,7 +263,19 @@ def generate_all(dest: Path, force: bool = False) -> list[str]:
     return made
 
 
+def main(argv: list[str] | None = None) -> int:
+    """コマンドラインから内蔵サウンドを作り直す。
+
+        python3 -m sounder.tones [出力先] [--force]
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    force = "--force" in argv
+    rest = [a for a in argv if not a.startswith("-")]
+    out = Path(rest[0] if rest else "sounds/builtin")
+    made = generate_all(out, force=force)
+    print("作成:", "、".join(made) if made else "（なし・すべて揃っています）")
+    return 0
+
+
 if __name__ == "__main__":
-    import sys
-    out = Path(sys.argv[1] if len(sys.argv) > 1 else "sounds/builtin")
-    print("generated:", ", ".join(generate_all(out, force=True)) or "(none)")
+    raise SystemExit(main())

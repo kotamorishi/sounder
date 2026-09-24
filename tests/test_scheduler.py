@@ -2,7 +2,7 @@
 
 import sys
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -126,3 +126,85 @@ class TestDescribe(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDescribeMore(unittest.TestCase):
+    def test_once_and_interval(self):
+        once = sched(kind="once", date="2026-09-25", time="07:00", days=None)
+        self.assertEqual(scheduler.describe(once), "2026-09-25 07:00")
+        iv = sched(kind="interval", every_minutes=30, days=[0, 1, 2, 3, 4, 5, 6],
+                   window={"start": "09:00", "end": "18:00"})
+        self.assertEqual(scheduler.describe(iv), "毎日 09:00〜18:00 の 30分ごと")
+
+    def test_day_shorthands(self):
+        self.assertEqual(scheduler.describe_days([5, 6]), "週末")
+        self.assertEqual(scheduler.describe_days([0, 2, 4]), "月水金曜")
+        self.assertEqual(scheduler.describe_days([0, 1, 2, 3, 4, 5, 6]), "毎日")
+
+    def test_day_of_month_labels(self):
+        self.assertEqual(scheduler.describe_day_of_month("last"), "毎月末")
+        self.assertEqual(scheduler.describe_day_of_month("last", bare=True), "月末")
+        self.assertEqual(scheduler.describe_day_of_month(5), "毎月5日")
+
+
+class TestIntervalAnchor(unittest.TestCase):
+    def test_anchor_before_the_window_is_stepped_forward(self):
+        s = sched(kind="interval", every_minutes=45, anchor="08:00",
+                  window={"start": "09:00", "end": "11:00"}, days=[0, 1, 2, 3, 4, 5, 6])
+        got = [w.strftime("%H:%M") for w, _t, _l in scheduler.events_between(
+            s, datetime(2026, 9, 21, 0, 0), datetime(2026, 9, 21, 23, 59))]
+        self.assertEqual(got, ["09:30", "10:15", "11:00"])
+
+
+class TestQuietEdge(unittest.TestCase):
+    def test_same_start_and_end_never_silences(self):
+        st = {"quiet_hours": {"enabled": True, "start": "08:00", "end": "08:00"}}
+        self.assertFalse(scheduler.in_quiet_hours(st, datetime(2026, 9, 21, 8, 0)))
+
+    def test_missing_settings_key(self):
+        self.assertFalse(scheduler.in_quiet_hours({}, datetime(2026, 9, 21, 8, 0)))
+
+
+class TestNextEventsEdge(unittest.TestCase):
+    def test_skips_occurrences_already_past_today(self):
+        s = sched(time="08:00", days=[0, 1, 2, 3, 4, 5, 6])
+        got = scheduler.next_events([s], now=datetime(2026, 9, 21, 9, 0), limit=1)
+        self.assertEqual(got[0]["at"], "2026-09-22T08:00:00")
+
+    def test_per_schedule_cap(self):
+        s = sched(time="08:00", days=[0, 1, 2, 3, 4, 5, 6])
+        got = scheduler.next_events([s], now=datetime(2026, 9, 21, 0, 0), limit=99, per_schedule=2)
+        self.assertEqual(len(got), 2)
+
+
+class TestCalendarDays(unittest.TestCase):
+    def test_shape_and_flags(self):
+        s = sched(name="朝", time="07:00", days=[0, 1, 2, 3, 4, 5, 6], lead_times=[10])
+        days = scheduler.calendar_days(
+            [s], date(2026, 9, 21), 2,
+            settings={"quiet_hours": {"enabled": True, "start": "06:00", "end": "06:55"}},
+            now=datetime(2026, 9, 21, 6, 58))
+        self.assertEqual([d["date"] for d in days], ["2026-09-21", "2026-09-22"])
+        self.assertTrue(days[0]["is_today"])
+        self.assertFalse(days[1]["is_today"])
+        first = days[0]["events"]
+        self.assertEqual([e["time"] for e in first], ["06:50", "07:00"])
+        self.assertTrue(first[0]["past"])      # 06:50 は 06:58 より前
+        self.assertTrue(first[0]["quiet"])     # 静音時間帯に入っている
+        self.assertFalse(first[1]["past"])
+        self.assertEqual(first[0]["tag"], "lead")
+        self.assertEqual(first[0]["lead"], 10)
+
+    def test_uses_the_lead_sound_for_lead_events(self):
+        s = sched(lead_times=[5], action={"type": "both", "sound": "builtin:doorbell",
+                                          "text": "はい"},
+                  lead_action={"sound": "builtin:ding"})
+        events = scheduler.calendar_days([s], date(2026, 9, 21), 1)[0]["events"]
+        self.assertEqual(events[0]["sound"], "builtin:ding")
+        self.assertEqual(events[0]["action_type"], "sound")
+        self.assertEqual(events[1]["sound"], "builtin:doorbell")
+        self.assertEqual(events[1]["action_type"], "both")
+
+    def test_defaults_to_now(self):
+        days = scheduler.calendar_days([], date.today(), 1)
+        self.assertTrue(days[0]["is_today"])
