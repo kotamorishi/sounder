@@ -30,5 +30,12 @@ elif launchctl print "gui/$(id -u)/com.local.sounder-tts" >/dev/null 2>&1; then
 else
   echo "Qwen3-TTS: 未登録（標準の声で読み上げ。scripts/install-tts.sh で登録）"
 fi
+if curl -sf -m 2 "http://127.0.0.1:10101/version" >/dev/null 2>&1; then
+  echo "AivisSpeech: 応答あり"
+elif launchctl print "gui/$(id -u)/com.local.sounder-aivis" >/dev/null 2>&1; then
+  echo "AivisSpeech: 起動中（読み込み中か、エラー。data/aivis.log を確認）"
+else
+  echo "AivisSpeech: 未登録（scripts/install-aivis.sh で登録）"
+fi
 LOG="$(cd "$(dirname "$0")/.." && pwd)/data/events.log"
 [ -f "$LOG" ] && { echo "--- 直近のログ ---"; tail -10 "$LOG"; }

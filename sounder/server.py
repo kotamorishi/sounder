@@ -53,9 +53,14 @@ class App:
         made = tones.generate_all(self.builtin_dir)
         if made:
             self.log("info", f"内蔵サウンドを生成しました（{len(made)}件）")
-        tts = neural.NeuralTTS(home / "data" / "tts-cache", log=self.log,
-                               url=os.environ.get("SOUNDER_TTS_URL", neural.DEFAULT_URL))
-        self.player = Player(self.builtin_dir, self.user_dir, log=self.log, neural_tts=tts)
+        cache = home / "data" / "tts-cache"
+        tts = [
+            neural.NeuralTTS(cache, log=self.log,
+                             url=os.environ.get("SOUNDER_TTS_URL", neural.DEFAULT_URL)),
+            neural.AivisTTS(cache, log=self.log,
+                            url=os.environ.get("SOUNDER_AIVIS_URL", neural.AIVIS_URL)),
+        ]
+        self.player = Player(self.builtin_dir, self.user_dir, log=self.log, tts=tts)
         # 保存時にサウンドの存在を確かめる（鳴らす瞬間に気づくのでは遅い）
         self.store = Store(home / "data" / "config.json", sound_check=self.player.resolve)
         self.scheduler = Scheduler(self.store, self.player, self.log)

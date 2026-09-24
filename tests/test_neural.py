@@ -130,8 +130,8 @@ class TestPlayerWithNeural(ServerMixin, PlayerBase):
 
     def setUp(self):
         super().setUp()
-        self.p.neural = neural.NeuralTTS(self.home / "cache", url=self.start_fake(),
-                                         log=lambda lv, m, **k: self.msgs.append((lv, m)))
+        self.p.tts = [neural.NeuralTTS(self.home / "cache", url=self.start_fake(),
+                                       log=lambda lv, m, **k: self.msgs.append((lv, m)))]
 
     def test_neural_voice_skips_say(self):
         self.p.play_blocking({"type": "speak", "text": "はい"}, settings=self.settings)
@@ -172,6 +172,107 @@ class TestPlayerWithNeural(ServerMixin, PlayerBase):
         self.p.prefetch({"type": "speak", "text": "はい", "voice": "Kyoko"}, settings=self.settings)
         time.sleep(0.2)
         self.assertEqual(FakeTTS.requests, [])
+
+
+class FakeAivis(BaseHTTPRequestHandler):
+    """AivisSpeech Engine（VOICEVOX 互換）のダミー。"""
+    requests: list = []
+
+    def log_message(self, *a):
+        pass
+
+    def _send(self, code, body, ctype):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        body = json.dumps([{"name": "まお", "styles": [{"name": "ノーマル", "id": 888753760},
+                                                     {"name": "あまあま", "id": 888753762}]}])
+        self._send(200, body.encode(), "application/json")
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(n) if n else b""
+        FakeAivis.requests.append((self.path, json.loads(body) if body else None))
+        if self.path.startswith("/audio_query"):
+            self._send(200, b'{"speedScale": 1.0, "accent_phrases": []}', "application/json")
+        else:
+            self._send(200, b"RIFF....WAVEaivis", "audio/wav")
+
+
+class TestAivis(unittest.TestCase):
+    def setUp(self):
+        FakeAivis.requests = []
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeAivis)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.tts = neural.AivisTTS(Path(self.tmp.name),
+                                   url=f"http://127.0.0.1:{srv.server_address[1]}")
+
+    def test_each_style_is_a_japanese_voice(self):
+        self.assertEqual(self.tts.voices(), [
+            {"name": "aivis:888753760", "label": "まお・ノーマル（AivisSpeech）", "locale": "ja_JP"},
+            {"name": "aivis:888753762", "label": "まお・あまあま（AivisSpeech）", "locale": "ja_JP"},
+        ])
+
+    def test_render_uses_query_then_synthesis_with_speed(self):
+        path = self.tts.render("こんにちは", "aivis:888753760", 270)
+        self.assertEqual(path.read_bytes(), b"RIFF....WAVEaivis")
+        (q_path, _), (s_path, s_body) = FakeAivis.requests
+        self.assertTrue(q_path.startswith("/audio_query?"))
+        self.assertIn("speaker=888753760", q_path)
+        self.assertEqual(s_path, "/synthesis?speaker=888753760")
+        self.assertEqual(s_body["speedScale"], 1.5)   # 270 / 180
+
+    def test_speed_is_clamped_and_part_of_the_cache_key(self):
+        self.tts.render("はい", "aivis:888753760", 90)
+        self.tts.render("はい", "aivis:888753760", 90)    # キャッシュから
+        self.tts.render("はい", "aivis:888753760", 400)   # 速さが違えば作り直す
+        speeds = [b["speedScale"] for p, b in FakeAivis.requests if p.startswith("/synthesis")]
+        self.assertEqual(speeds, [0.5, 2.0])
+
+    def test_is_neural(self):
+        self.assertTrue(neural.is_neural("aivis:888753760"))
+        self.assertTrue(self.tts.handles("aivis:1"))
+        self.assertFalse(self.tts.handles("qwen:ono_anna"))
+
+    def test_server_down(self):
+        down = neural.AivisTTS(Path(self.tmp.name), url="http://127.0.0.1:9")
+        self.assertEqual(down.voices(), [])
+        self.assertIsNone(down.render("はい", "aivis:1", 180))
+
+
+class TestPlayerWithAivis(PlayerBase):
+    settings = {"default_volume": 0.6, "default_voice": "aivis:888753760", "speak_rate": 180}
+
+    def setUp(self):
+        super().setUp()
+        FakeAivis.requests = []
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeAivis)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        self.p.tts = [neural.NeuralTTS(self.home / "cache", url="http://127.0.0.1:9"),
+                      neural.AivisTTS(self.home / "cache",
+                                      url=f"http://127.0.0.1:{srv.server_address[1]}")]
+
+    def test_routes_to_aivis_with_the_schedule_rate(self):
+        self.p.play_blocking({"type": "speak", "text": "はい", "rate": 360}, settings=self.settings)
+        calls = self.recorded()
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0].startswith("afplay"))
+        self.assertEqual(FakeAivis.requests[-1][1]["speedScale"], 2.0)
+
+    def test_voices_list_both_engines(self):
+        names = [v["name"] for v in self.p.voices()]
+        self.assertIn("aivis:888753762", names)
+        self.assertIn("Kyoko", names)
 
 
 class RecordingPlayer:

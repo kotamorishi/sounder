@@ -140,6 +140,24 @@ scripts/install-tts.sh      # 専用の Python 環境を .venv-tts/ に作り、
   **標準の声（`say`）で代わりに読み上げます**。鳴らないことはありません。
 - 解除は `scripts/uninstall-tts.sh`。sounder 本体は今までどおり標準ライブラリだけで動きます。
 
+### 日本語の声をもっと（AivisSpeech）
+
+[AivisSpeech](https://aivis-project.com/)（日本語専用の音声合成、無料）の声も使えます。
+[リリース](https://github.com/Aivis-Project/AivisSpeech/releases) から Apple Silicon 版を
+`/Applications` に入れてから、エンジンを自動起動に登録します。
+
+```sh
+scripts/install-aivis.sh    # AivisSpeech.app の中のエンジンを 127.0.0.1:10101 で常駐させる
+```
+
+- 声の一覧に「まお・ノーマル（AivisSpeech）」のように、話者とスタイルの組ごとに出ます。
+  声（モデル）は AivisSpeech のアプリや [AivisHub](https://hub.aivis-project.com/) から追加でき、
+  エンジンを再起動すると一覧に増えます。
+- Qwen3-TTS と違い、**「話す速さ」が効きます**（180 が普通の速さ、90〜400 を 0.5〜2 倍に置き換え）。
+- 読み上げの作りおき・キャッシュ・止まっているときの `say` への切り替えは Qwen3-TTS と同じです。
+- アプリ（画面のある AivisSpeech）も同じポート 10101 でエンジンを使うため、ぶつかる場合があります。
+  うまく動かないときは `scripts/uninstall-aivis.sh` で一度止めてからアプリを使ってください。
+
 ## 鳴らしすぎないための作り
 
 - **禁止時間**（設定タブ）… その時間帯に来た予定は鳴らさず、ログに残します。
@@ -181,7 +199,7 @@ sounder/           アプリ本体
   tones.py         内蔵チャイム／メロディーの合成
   config.py        設定ファイルの読み書きと入力検証
   player.py        afplay / say の呼び出し
-  neural.py        Qwen3-TTS サーバへの橋渡しと音声のキャッシュ
+  neural.py        Qwen3-TTS・AivisSpeech への橋渡しと音声のキャッシュ
   daysoff.py       お休みの日の暦（オンタリオ州の祝日の計算・TDSB の休校日）
   scheduler.py     いつ鳴らすかの計算と 1 秒ごとの判定
   eventlog.py      実行ログ
@@ -200,7 +218,7 @@ sounds/builtin/    自動生成されるチャイム
 sounds/user/       アップロードした音
 data/config.json   予定と設定（これだけバックアップすれば復元できます）
 data/events.log    実行ログ
-data/tts-cache/    Qwen3-TTS で作った読み上げ（消してもかまいません）
+data/tts-cache/    機械学習の声で作った読み上げ（消してもかまいません）
 tests/             テスト一式
   ui/              画面を PNG に撮って目視確認するための道具
 ```
