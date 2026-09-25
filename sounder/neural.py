@@ -75,7 +75,7 @@ class _Engine:
         self.launchctl = shutil.which("launchctl") if manage else None
         self.last_used = time.monotonic()
         self._start_lock = threading.Lock()
-        self._registered: tuple[float, bool] = (0.0, False)
+        self._registered: tuple[float | None, bool] = (None, False)  # 初回は必ず確かめる
         self._known: list[dict] | None = None
 
     def handles(self, voice: str) -> bool:
@@ -139,7 +139,7 @@ class _Engine:
     def registered(self) -> bool:
         """LaunchAgent に登録されているか（1 分だけ覚えておく）。"""
         checked, ok = self._registered
-        if time.monotonic() - checked > 60:
+        if checked is None or time.monotonic() - checked > 60:
             ok = self._launchctl("print")
             self._registered = (time.monotonic(), ok)
         return ok

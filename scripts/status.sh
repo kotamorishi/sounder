@@ -37,5 +37,15 @@ elif launchctl print "gui/$(id -u)/com.local.sounder-aivis" >/dev/null 2>&1; the
 else
   echo "AivisSpeech: 未登録（scripts/install-aivis.sh で登録）"
 fi
+CAL="$(cd "$(dirname "$0")/.." && pwd)/data/calendar.json"
+if launchctl print "gui/$(id -u)/com.local.sounder-calendar" >/dev/null 2>&1; then
+  if [ -f "$CAL" ]; then
+    echo "カレンダー連携: $(python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(d.get('status'),'/',len(d.get('events') or []),'件 /',d.get('generated'))" "$CAL")"
+  else
+    echo "カレンダー連携: 登録済み（まだ書き出していない。Mac の画面で許可を待っている可能性）"
+  fi
+else
+  echo "カレンダー連携: 未登録（scripts/install-calendar.sh で登録）"
+fi
 LOG="$(cd "$(dirname "$0")/.." && pwd)/data/events.log"
 [ -f "$LOG" ] && { echo "--- 直近のログ ---"; tail -10 "$LOG"; }
