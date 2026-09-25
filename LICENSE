@@ -19,13 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Third-party material bundled in this repository keeps its own license:
-
-- web/fonts/*.woff2 — M PLUS Rounded 1c, SIL Open Font License 1.1 (see web/fonts/OFL.txt)
-
-Not bundled (each user downloads them on their own Mac, under their own terms):
-Qwen3-TTS models (Apache-2.0), AivisSpeech and its voice models (per-model licenses),
-and sound effects from 効果音ラボ / soundeffect-lab.info (free to use, redistribution prohibited).
