@@ -225,6 +225,7 @@ def validate_settings(raw: Any, current: dict[str, Any]) -> dict[str, Any]:
             "lead": lead,
             "sound": (c.get("sound", cur["sound"]) or "").strip()[:300],
             "voice": (c.get("voice", cur["voice"]) or "").strip()[:80],
+            "voice_en": (c.get("voice_en", cur["voice_en"]) or "").strip()[:80],
         }
     if "tts_idle_minutes" in raw:
         out["tts_idle_minutes"] = _int_in(raw["tts_idle_minutes"], 0, 1440, "休ませるまでの時間",

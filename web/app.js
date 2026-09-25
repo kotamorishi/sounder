@@ -1160,7 +1160,7 @@ async function makeVoice() {
 
 // --- カレンダー連携
 const CAL_LEADS = [0, 5, 10, 15, 30, 60].map((m) => ({ value: String(m), label: m ? `開始の${m}分前` : '開始時刻' }));
-const CAL_DEFAULTS = { enabled: false, calendars: [], lead: 10, sound: 'builtin:melody_notice', voice: '' };
+const CAL_DEFAULTS = { enabled: false, calendars: [], lead: 10, sound: 'builtin:melody_notice', voice: '', voice_en: '' };
 
 function saveCalendar(patch, msg) {
   const cur = Object.assign({}, CAL_DEFAULTS, state.settings.calendar || {});
@@ -1189,6 +1189,10 @@ function renderCalendarSettings() {
     .concat((state.sounds.random || []).map((s) => ({ value: s.ref, label: s.label })));
   fillSelect($('#cal-sound'), sounds, cfg.sound || '');
   if (!cfg.sound) $('#cal-sound').value = '';
+  const enVoices = [{ value: '', label: '日本語と同じ声' }]
+    .concat(state.voices.filter((v) => v.locale.startsWith('en')).map((v) => ({ value: v.name, label: v.label || v.name })));
+  fillSelect($('#cal-voice-en'), enVoices, cfg.voice_en || '');
+  if (!cfg.voice_en) $('#cal-voice-en').value = '';
   const box = $('#cal-list');
   box.textContent = '';
   for (const c of feed.calendars || []) {
@@ -1201,7 +1205,8 @@ function renderCalendarSettings() {
   const when = feed.generated ? SL.fmtWhen(feed.generated.slice(0, 19)) : '—';
   const lead = Number(cfg.lead);
   $('#cal-desc').textContent = `例：「${lead ? `${lead}分後に、算数があります。` : '算数の時間です。'}」 `
-    + `声は既定の声（${voiceLabel(state.settings.default_voice) || 'システム既定'}）で読みます。終日の予定は読みません。`
+    + `声は既定の声（${voiceLabel(state.settings.default_voice) || 'システム既定'}）で読みます。`
+    + `タイトルに日本語が無い予定は英語で読みます（例：「NBS starts in ${lead || 10} minutes.」）。終日の予定は読みません。`
     + `禁止時間と「すべての予定を鳴らす」の設定にも従います。予定は 5 分ごとに Mac のカレンダーから読み直します（最終 ${when}）。`;
 }
 
@@ -1854,6 +1859,11 @@ function wire() {
     saveCalendar({ enabled: on }, on ? 'カレンダーの読み上げをオンにしました' : 'カレンダーの読み上げをオフにしました');
   });
   $('#cal-lead').addEventListener('change', (e) => saveCalendar({ lead: Number(e.target.value) }, '保存しました'));
+  $('#cal-voice-en').addEventListener('change', (e) => {
+    saveCalendar({ voice_en: e.target.value }, '保存しました');
+    previewSpeech({ voice: e.target.value || state.settings.default_voice, rate: Number($('#set-rate').value),
+      volume: Number($('#set-volume').value), text: 'NBS starts in 10 minutes.' });
+  });
   $('#cal-sound').addEventListener('change', (e) => {
     saveCalendar({ sound: e.target.value }, '保存しました');
     if (e.target.value) preview(e.target.value);

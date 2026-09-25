@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -21,7 +22,10 @@ DEFAULTS = {
     "lead": 10,               # 開始の何分前に読むか（0 = 開始時刻）
     "sound": "builtin:melody_notice",   # 読み上げの前に鳴らす音（"" なら読み上げだけ）
     "voice": "",              # "" なら設定の既定の声
+    "voice_en": "",           # 英語の予定（タイトルに日本語が無い）の声。"" なら voice と同じ
 }
+# ひらがな・カタカナ・漢字が 1 文字でもあれば日本語の予定として読む
+JAPANESE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]")
 LEADS = (0, 5, 10, 15, 30, 60)
 
 
@@ -29,8 +33,17 @@ def settings_of(settings: dict) -> dict:
     return {**DEFAULTS, **(settings.get("calendar") or {})}
 
 
+def is_english(title: str) -> bool:
+    return bool(title.strip()) and not JAPANESE.search(title)
+
+
 def sentence(title: str, lead: int) -> str:
+    """読み上げる文。タイトルに日本語が無ければ英語の文にする。"""
     title = title.strip() or "予定"
+    if is_english(title):
+        if lead <= 0:
+            return f"It's time for {title}."
+        return f"{title} starts in {lead} minute{'s' if lead != 1 else ''}."
     return f"{title}の時間です。" if lead <= 0 else f"{lead}分後に、{title}があります。"
 
 
@@ -87,8 +100,9 @@ class CalendarFeed:
             at = start - timedelta(minutes=lead)
             title = (ev.get("title") or "").strip() or "予定"
             text = sentence(title, lead)
+            voice = (cfg["voice_en"] or cfg["voice"]) if is_english(title) else cfg["voice"]
             action = {"type": "both" if cfg["sound"] else "speak", "text": text,
-                      "voice": cfg["voice"], "volume": settings.get("default_volume", 0.6),
+                      "voice": voice, "volume": settings.get("default_volume", 0.6),
                       "repeat": 1}
             if cfg["sound"]:
                 action["sound"] = cfg["sound"]

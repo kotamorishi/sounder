@@ -87,6 +87,35 @@ class TestSchedules(Base):
         self.assertEqual([c["title"] for c in st["calendars"]], ["Morishitas", "Work"])
 
 
+class TestEnglish(Base):
+    def setUp(self):
+        super().setUp()
+        FEED["events"].append({"id": "e4|x", "calendar_id": "fam", "title": "NBS", "all_day": False,
+                               "start": "2026-09-24T21:00:00-04:00", "end": "2026-09-24T22:00:00-04:00"})
+        self.path.write_text(json.dumps(FEED, ensure_ascii=False))
+        self.addCleanup(FEED["events"].pop)
+
+    def test_sentences(self):
+        self.assertEqual(calendarfeed.sentence("NBS", 10), "NBS starts in 10 minutes.")
+        self.assertEqual(calendarfeed.sentence("Zoo trip", 1), "Zoo trip starts in 1 minute.")
+        self.assertEqual(calendarfeed.sentence("Emma&Leo field trip", 0), "It's time for Emma&Leo field trip.")
+        self.assertEqual(calendarfeed.sentence("ななこ先生", 10), "10分後に、ななこ先生があります。")
+        self.assertEqual(calendarfeed.sentence("NBS 練習", 10), "10分後に、NBS 練習があります。")
+        self.assertEqual(calendarfeed.sentence("ｶﾗｵｹ", 0), "ｶﾗｵｹの時間です。")   # 半角カナも日本語
+
+    def test_english_events_use_the_english_voice(self):
+        self.settings["calendar"].update(voice="qwen:ono_anna", voice_en="qwen:ryan@announcer")
+        by = {s["name"]: s["action"] for s in self.feed.schedules(self.settings)}
+        self.assertEqual(by["NBS"]["voice"], "qwen:ryan@announcer")
+        self.assertEqual(by["NBS"]["text"], "NBS starts in 10 minutes.")
+        self.assertEqual(by["算数"]["voice"], "qwen:ono_anna")
+
+    def test_without_an_english_voice_the_same_voice_is_used(self):
+        self.settings["calendar"].update(voice="qwen:ono_anna", voice_en="")
+        by = {s["name"]: s["action"] for s in self.feed.schedules(self.settings)}
+        self.assertEqual(by["NBS"]["voice"], "qwen:ono_anna")
+
+
 class TestFiring(Base):
     def test_fires_through_the_scheduler_without_touching_the_store(self):
         played, logs = [], []
@@ -137,7 +166,8 @@ class TestSettings(unittest.TestCase):
         out = config.validate_settings({"calendar": {"enabled": True, "calendars": ["a", "a", "b"],
                                                      "lead": 15}}, cur)
         self.assertEqual(out["calendar"], {"enabled": True, "calendars": ["a", "b"], "lead": 15,
-                                           "sound": "builtin:melody_notice", "voice": ""})
+                                           "sound": "builtin:melody_notice", "voice": "",
+                                           "voice_en": ""})
         with self.assertRaises(config.ValidationError):
             config.validate_settings({"calendar": {"lead": 999}}, cur)
         with self.assertRaises(config.ValidationError):
