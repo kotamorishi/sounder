@@ -203,6 +203,8 @@ def calendar_days(schedules: list[dict], start: date, days: int,
                     "source": s.get("source"),
                     "calendar": s.get("calendar"),
                     "starts": s.get("starts"),
+                    "starts_at": s.get("starts_at"),
+                    "ends_at": s.get("ends_at"),
                 })
         events.sort(key=lambda e: e["at"])
         out.append({

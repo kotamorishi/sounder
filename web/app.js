@@ -831,7 +831,9 @@ function renderTimeline(scroll) {
       const key = `${e.schedule_id}|${Math.floor(minOf(e.at) / 60)}`;
       (chimeRows[key] ||= []).push(e);
     } else if (e.tag === 'main') {
-      items.push({ min: minOf(e.at), node: tlCard(e, leadsByMain[`${e.schedule_id}|${e.at}`] || [], byId[e.schedule_id]) });
+      // カレンダーの予定は、読み上げの時刻（点）ではなく予定そのものの開始時刻にカードを置く
+      const min = e.source === 'calendar' && (e.starts_at || '').slice(0, 10) === tlDay ? minOf(e.starts_at) : minOf(e.at);
+      items.push({ min, node: tlCard(e, leadsByMain[`${e.schedule_id}|${e.at}`] || [], byId[e.schedule_id]) });
     } else if (e.tag === 'lead' && e.kind !== 'interval' && e.main_at.slice(0, 10) !== tlDay) {
       // 本番が翌日（0 時台）の予告は単独で出す
       items.push({ min: minOf(e.at), node: tlLeadOnly(e, byId[e.schedule_id]) });
@@ -928,15 +930,22 @@ function tlCard(e, leads, sched) {
   const b = el('button', 'tl-card' + (e.past ? ' is-past' : '') + (muted ? ' is-muted' : ''));
   b.type = 'button';
   const top = el('div', 'tl-card-top');
-  top.append(el('span', 't', hmAt(e.at)), el('span', 'n', e.name));
+  const cal = e.source === 'calendar' && e.starts_at;
+  top.append(el('span', 't', cal ? `${hmAt(e.starts_at)}–${hmAt(e.ends_at || e.starts_at)}` : hmAt(e.at)),
+    el('span', 'n', e.name));
   if (!e.past && !muted) top.append(el('span', 'rel', SL.fmtCountdown(e.at)));
   b.append(top);
+  if (cal && e.ends_at && e.ends_at.slice(0, 10) === e.starts_at.slice(0, 10)) {
+    // 予定の長さぶんの高さにする（1 時間の予定なら 1 時間ぶん）
+    const mins = (SL.parseLocal(e.ends_at) - SL.parseLocal(e.starts_at)) / 60000;
+    if (mins > 0) b.style.minHeight = `${Math.round(mins * PX_PER_MIN) - 4}px`;
+  }
   if (sched) {
     const a = sched.action || {};
     const parts = a.type === 'both' ? [soundLabel(a.sound), `＋「${a.text || ''}」`] : whatParts(a);
     b.append(phrased('span', 'tl-card-sub', parts));
   } else if (e.source === 'calendar') {
-    b.append(phrased('span', 'tl-card-sub', [`カレンダー「${e.calendar || ''}」`, ` · ${e.starts} 開始`]));
+    b.append(phrased('span', 'tl-card-sub', [`カレンダー「${e.calendar || ''}」`, ` · ${hmAt(e.at)} に読み上げ`]));
   }
   if (leads.length) {
     const pills = el('div', 'tl-pills');

@@ -95,6 +95,7 @@ class CalendarFeed:
                 continue
             try:
                 start = datetime.fromisoformat(ev["start"]).astimezone().replace(tzinfo=None)
+                end = datetime.fromisoformat(ev.get("end") or ev["start"]).astimezone().replace(tzinfo=None)
             except (KeyError, ValueError):
                 continue
             at = start - timedelta(minutes=lead)
@@ -111,6 +112,9 @@ class CalendarFeed:
                 "id": f"cal-{key}", "source": "calendar", "enabled": True, "kind": "once",
                 "name": title, "date": at.date().isoformat(), "time": at.strftime("%H:%M"),
                 "calendar": names.get(ev.get("calendar_id"), ""), "starts": start.strftime("%H:%M"),
+                # タイムラインでは、読み上げの時刻ではなく予定そのものの時間帯に置く
+                "starts_at": start.isoformat(timespec="seconds"),
+                "ends_at": max(end, start).isoformat(timespec="seconds"),
                 "lead_times": [], "lead_action": None, "skip": [], "action": action,
             })
         return out
