@@ -298,6 +298,23 @@ class TestSchedules(ServerCase):
         self.ok("POST", f"/api/schedules/{sid}/test", {"which": "lead"})
         self.assertIn("ding.wav", "\n".join(self.wait_calls(1)))
 
+    def test_test_plays_a_calendar_item_from_the_banner(self):
+        """次の予定の帯の再生ボタンは、カレンダー連携の予定（保存していない）も鳴らせる"""
+        start = (datetime.now() + timedelta(hours=2)).astimezone().isoformat(timespec="seconds")
+        (self.home / "data" / "calendar.json").write_text(json.dumps({
+            "status": "authorized", "calendars": [{"id": "fam", "title": "Family"}],
+            "events": [{"id": "e1", "calendar_id": "fam", "title": "NBS", "all_day": False,
+                        "start": start, "end": start}]}))
+        self.ok("PATCH", "/api/settings", {"calendar": {"enabled": True, "calendars": ["fam"],
+                                                        "sound": "builtin:ding"}})
+        nxt = self.ok("GET", "/api/state")["next_events"][0]
+        self.assertEqual(nxt["name"], "NBS")
+        self.ok("POST", f"/api/schedules/{nxt['schedule_id']}/test", {})
+        # say -v ?（声の一覧）・say -o（読み上げを作る）・afplay（音）・afplay（読み上げ）
+        calls = "\n".join(self.wait_calls(4))
+        self.assertIn("ding.wav", calls)
+        self.assertIn("NBS starts in 10 minutes.", calls)
+
     def test_test_falls_back_to_main_without_lead(self):
         sid = self.ok("POST", "/api/schedules",
                       self.sample(lead_times=[]))["schedule"]["id"]

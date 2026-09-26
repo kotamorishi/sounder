@@ -362,7 +362,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"ok": True})
                     return
             elif tail == "test" and method == "POST":
-                s = app.store.get(sid)
+                # 保存した予定のほか、カレンダー連携の予定（id が cal- で始まる）も鳴らせる
+                s = app.store.get(sid) or next(
+                    (x for x in app.scheduler.all_schedules() if x["id"] == sid), None)
                 if not s:
                     raise KeyError(sid)
                 which = (self._json_body().get("which") or "main")
