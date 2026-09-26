@@ -150,6 +150,19 @@ curl -s -o /dev/null -w "%{http_code}\n" "https://<DNSName>/?t=$TOKEN"   # 確�
 👤 スマホにも Tailscale を入れて同じアカウントでログイン → `https://<DNSName>/?t=<合言葉>` を開く →
 共有メニュー「ホーム画面に追加」（Android の Chrome は「アプリをインストール」）。iPhone のホーム画面版は Cookie が別なので初回だけ合言葉を入力。
 
+## 7b. AI 連携（任意）
+
+OpenAI 互換の API（vLLM・Ollama・LM Studio など）を持つ AI サーバがあれば、朝に今日の予定をまとめて読み上げられる。
+既定はオフ。予定の中身（予定名・時刻・場所・祝日）をその AI サーバに送る。
+
+```sh
+curl -s http://<AIサーバ>:<ポート>/v1/models      # 確認: data[].id にモデル名（例: vLLM は :8000、Ollama は :11434）
+```
+
+👤 画面の 設定 → AI 連携 で「AI を使う」をオン → サーバ（例 `http://spark-1:8000/v1`）→「接続を確かめる」→
+朝のお知らせの時刻・曜日を選ぶ。「今日のお知らせを作って鳴らす」で試せる。
+API: `POST /api/ai/check`、`POST /api/ai/briefing {"play":true}`。AI が答えないときは決まった文で読む。
+
 ## 8. 運用
 
 ```sh

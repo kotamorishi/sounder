@@ -173,6 +173,47 @@
       <p class="footnote" id="cal-desc"></p>
     </div>
 
+    <div class="group-block" id="ai-block">
+      <h2 class="group-head">AI 連携（オプション）</h2>
+      <div class="group">
+        <div class="cell">
+          <span class="cell-label" id="ai-on-label">AI を使う</span>
+          <button type="button" class="switch" id="ai-enabled" role="switch" aria-checked="false" aria-labelledby="ai-on-label"></button>
+        </div>
+        <label class="cell" data-ai-only>
+          <span class="cell-label">サーバ</span>
+          <input type="url" class="cell-input cell-text" id="ai-url" placeholder="http://spark-1:8000/v1" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="cell" data-ai-only>
+          <span class="cell-label">モデル</span>
+          <input type="text" class="cell-input cell-text" id="ai-model" placeholder="自動（最初のモデル）" autocomplete="off" spellcheck="false">
+        </label>
+        <button type="button" class="cell cell-button" id="ai-check" data-ai-only>接続を確かめる</button>
+      </div>
+      <p class="footnote" id="ai-desc"></p>
+      <h3 class="group-head" id="ai-brief-head" data-ai-only>朝のお知らせ</h3>
+      <div class="group" data-ai-only>
+        <div class="cell">
+          <span class="cell-label" id="ai-brief-label">今日の予定を読み上げる</span>
+          <button type="button" class="switch" id="ai-brief" role="switch" aria-checked="false" aria-labelledby="ai-brief-label"></button>
+        </div>
+        <label class="cell">
+          <span class="cell-label">時刻</span>
+          <input type="time" class="cell-input" id="ai-brief-time">
+        </label>
+        <label class="cell">
+          <span class="cell-label">曜日</span>
+          <select class="cell-input cell-select" id="ai-brief-days"></select>
+        </label>
+        <label class="cell">
+          <span class="cell-label">前に鳴らす音</span>
+          <select class="cell-input cell-select" id="ai-brief-sound"></select>
+        </label>
+        <button type="button" class="cell cell-button" id="ai-brief-try">今日のお知らせを作って鳴らす</button>
+      </div>
+      <p class="footnote" id="ai-brief-desc" data-ai-only></p>
+    </div>
+
     <div class="group-block">
       <h2 class="group-head">禁止時間</h2>
       <div class="group">

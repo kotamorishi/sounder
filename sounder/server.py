@@ -21,6 +21,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import scheduler as sched_mod
+from . import ai as ai_mod
 from . import calendarfeed, daysoff, neural, tones
 from .config import Store, ValidationError
 from .eventlog import EventLog
@@ -67,7 +68,9 @@ class App:
         # 保存時にサウンドの存在を確かめる（鳴らす瞬間に気づくのでは遅い）
         self.store = Store(home / "data" / "config.json", sound_check=self.player.resolve)
         self.calendar = calendarfeed.CalendarFeed(home / "data" / "calendar.json")
-        self.scheduler = Scheduler(self.store, self.player, self.log, feed=self.calendar)
+        self.ai = ai_mod.AI(self.calendar, log=self.log, store=self.store)
+        self.scheduler = Scheduler(self.store, self.player, self.log, feed=self.calendar,
+                                   extra_feeds=[self.ai])
         self.token = token
         self.started_at = datetime.now()
         self._pick_default_voice()
@@ -291,6 +294,20 @@ class Handler(BaseHTTPRequestHandler):
                     app.scheduler.all_schedules(settings), first, span, settings=settings,
                     log_entries=app.log.recent(300)),
             })
+            return
+
+        if parts == ["ai", "check"] and method == "POST":
+            self._json(app.ai.check(app.store.settings))
+            return
+        if parts == ["ai", "briefing"] and method == "POST":
+            # 今日のお知らせを今すぐ作る（play=true なら鳴らす）。設定画面の「試す」ボタン用
+            body = self._json_body()
+            settings = app.store.settings
+            text = app.ai.briefing_text(settings, date.today(), wait=True)
+            if body.get("play"):
+                app.player.play(app.ai.briefing_action(settings, text), settings=settings,
+                                label="試聴:今日のお知らせ")
+            self._json({"text": text})
             return
 
         if parts[:2] == ["voices", "design"]:

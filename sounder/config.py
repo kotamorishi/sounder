@@ -12,6 +12,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from . import ai as ai_mod
 from . import calendarfeed, daysoff
 
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
@@ -33,6 +34,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "tts_idle_minutes": 30,
     # カレンダー連携（calendarfeed.DEFAULTS）。ここに無い項目は起動時に読み捨てられるので必ず並べる
     "calendar": dict(calendarfeed.DEFAULTS),
+    # AI との連携（オプション。既定はオフ）
+    "ai": json.loads(json.dumps(ai_mod.DEFAULTS)),
 }
 
 
@@ -226,6 +229,31 @@ def validate_settings(raw: Any, current: dict[str, Any]) -> dict[str, Any]:
             "sound": (c.get("sound", cur["sound"]) or "").strip()[:300],
             "voice": (c.get("voice", cur["voice"]) or "").strip()[:80],
             "voice_en": (c.get("voice_en", cur["voice_en"]) or "").strip()[:80],
+        }
+    if "ai" in raw:
+        a = raw["ai"] or {}
+        if not isinstance(a, dict):
+            raise ValidationError("AI の設定が不正です")
+        cur = ai_mod.settings_of(current)
+        url = (a.get("url", cur["url"]) or "").strip()
+        if not re.match(r"^https?://[^\s]+$", url) or len(url) > 300:
+            raise ValidationError("AI サーバの URL は http:// か https:// で始めてください")
+        b = a.get("briefing") or {}
+        if not isinstance(b, dict):
+            raise ValidationError("朝のお知らせの設定が不正です")
+        cb = cur["briefing"]
+        out["ai"] = {
+            "enabled": bool(a.get("enabled", cur["enabled"])),
+            "url": url,
+            "model": (a.get("model", cur["model"]) or "").strip()[:200],
+            "api_key": (a.get("api_key", cur["api_key"]) or "").strip()[:300],
+            "briefing": {
+                "enabled": bool(b.get("enabled", cb["enabled"])),
+                "time": _time(b.get("time", cb["time"]), "朝のお知らせの時刻"),
+                "days": _days(b.get("days", cb["days"]), required=True),
+                "sound": (b.get("sound", cb["sound"]) or "").strip()[:300],
+                "voice": (b.get("voice", cb["voice"]) or "").strip()[:80],
+            },
         }
     if "tts_idle_minutes" in raw:
         out["tts_idle_minutes"] = _int_in(raw["tts_idle_minutes"], 0, 1440, "休ませるまでの時間",

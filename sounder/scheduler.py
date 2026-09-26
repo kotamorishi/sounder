@@ -294,10 +294,13 @@ def describe_day_of_month(day, *, bare: bool = False) -> str:
 class Scheduler:
     """1 秒ごとに時計を見て、その間に来た発火時刻を鳴らす。"""
 
-    def __init__(self, store, player, log, *, grace: float = DEFAULT_GRACE, feed=None) -> None:
+    def __init__(self, store, player, log, *, grace: float = DEFAULT_GRACE, feed=None,
+                 extra_feeds=()) -> None:
         self.store = store
-        # カレンダー連携（calendarfeed.CalendarFeed）。予定を 1 回きりの予定として足す
+        # 保存していない予定の出どころ。カレンダー連携（calendarfeed.CalendarFeed）や AI の朝のお知らせ（ai.AI）。
+        # どれも schedules(settings) で予定を返す。prepare(now, settings) があれば毎回呼ぶ
         self.feed = feed
+        self.feeds = [f for f in (feed, *extra_feeds) if f]
         self.player = player
         self.log = log
         self.grace = grace
@@ -328,15 +331,19 @@ class Scheduler:
             self._stop.wait(1.0)
 
     def all_schedules(self, settings: dict | None = None) -> list[dict]:
-        """保存してある予定 ＋ カレンダー連携の予定。"""
-        extra = self.feed.schedules(settings or self.store.settings) if self.feed else []
-        return self.store.schedules() + extra
+        """保存してある予定 ＋ カレンダー連携・AI などの予定。"""
+        settings = settings or self.store.settings
+        return self.store.schedules() + [s for f in self.feeds for s in f.schedules(settings)]
 
     def tick(self, now: datetime) -> None:
         lo, self._last_tick = self._last_tick, now
         if now < lo:  # 時計が巻き戻った（手動変更・夏時間）
             lo = now - timedelta(seconds=1)
         settings = self.store.settings
+        for f in self.feeds:
+            prepare = getattr(f, "prepare", None)
+            if prepare:
+                prepare(now, settings)
         for sched in self.all_schedules(settings):
             if not sched.get("enabled"):
                 continue
@@ -395,8 +402,8 @@ class Scheduler:
         action = self.action_for(sched, tag, lead, settings)
         self.log("fired", f"{label} を再生しました", schedule_id=sched["id"])
         self.player.play(action, settings=settings, label=label, queue=True)
-        if sched.get("source") == "calendar":
-            return  # 保存していない予定なので、前回の記録も単発のオフもない
+        if sched.get("source"):
+            return  # 保存していない予定（カレンダー・AI）なので、前回の記録も単発のオフもない
         self.store.mark_fired(sched["id"], when)
 
         if sched["kind"] == "once" and tag == "main":

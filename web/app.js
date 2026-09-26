@@ -613,6 +613,7 @@ function renderSettings() {
   $('#set-voice-val').textContent = voiceLabel(st.default_voice) || 'システム既定';
   renderDesigned();
   renderCalendarSettings();
+  renderAISettings();
   const neural = state.voices.filter((v) => 'asleep' in v);
   $('#tts-idle-block').hidden = !neural.length;
   const idle = String(st.tts_idle_minutes ?? 30);
@@ -962,6 +963,8 @@ function tlCard(e, leads, sched) {
     const a = sched.action || {};
     const parts = a.type === 'both' ? [soundLabel(a.sound), `＋「${a.text || ''}」`] : whatParts(a);
     b.append(phrased('span', 'tl-card-sub', parts));
+  } else if (e.source === 'ai') {
+    b.append(phrased('span', 'tl-card-sub', ['AI が今日の予定をまとめて読み上げます']));
   } else if (e.source === 'calendar') {
     b.append(phrased('span', 'tl-card-sub', [`カレンダー「${e.calendar || ''}」`, ` · ${hmAt(e.at)} に読み上げ`]));
   }
@@ -1235,6 +1238,46 @@ function renderCalendarSettings() {
     + `声は既定の声（${voiceLabel(state.settings.default_voice) || 'システム既定'}）で読みます。`
     + `タイトルに日本語が無い予定は英語で読みます（例：「NBS starts in ${lead || 10} minutes.」）。終日の予定は読みません。`
     + `禁止時間と「すべての予定を鳴らす」の設定にも従います。予定は 5 分ごとに Mac のカレンダーから読み直します（最終 ${when}）。`;
+}
+
+// --- AI 連携（オプション）
+const AI_DAYS = [
+  { value: '0,1,2,3,4,5,6', label: '毎日' }, { value: '0,1,2,3,4', label: '平日' }, { value: '5,6', label: '週末' },
+];
+let aiLastText = '';
+
+function aiSettings() {
+  const a = state.settings.ai || {};
+  return Object.assign({ enabled: false, url: 'http://spark-1:8000/v1', model: '', api_key: '' }, a,
+    { briefing: Object.assign({ enabled: false, time: '07:30', days: [0, 1, 2, 3, 4, 5, 6], sound: 'builtin:melody_morning', voice: '' }, a.briefing || {}) });
+}
+
+function saveAI(patch, msg) {
+  const cur = aiSettings();
+  const next = Object.assign(cur, patch, { briefing: Object.assign(cur.briefing, patch.briefing || {}) });
+  return saveSettings({ ai: next }, msg);
+}
+
+function renderAISettings() {
+  const a = aiSettings();
+  setSwitch($('#ai-enabled'), !!a.enabled);
+  $$('#ai-block [data-ai-only]').forEach((n) => { n.hidden = !a.enabled; });
+  if (document.activeElement !== $('#ai-url')) $('#ai-url').value = a.url || '';
+  if (document.activeElement !== $('#ai-model')) $('#ai-model').value = a.model || '';
+  $('#ai-desc').textContent = a.enabled
+    ? `予定の中身（カレンダーの予定名・時刻・場所、祝日・休校日）を、このサーバの AI に送って文を作らせます。`
+      + `OpenAI 互換の API（vLLM・Ollama・LM Studio など）が使えます。AI が答えないときは決まった文で読み上げます。`
+    : '同じネットワークや Tailscale の AI サーバ（OpenAI 互換の API）を使って、今日の予定をまとめて朝に読み上げたりできます。';
+  const b = a.briefing;
+  setSwitch($('#ai-brief'), !!b.enabled);
+  if (document.activeElement !== $('#ai-brief-time')) $('#ai-brief-time').value = b.time;
+  fillSelect($('#ai-brief-days'), AI_DAYS, (b.days || []).join(','));
+  const sounds = [{ value: '', label: 'なし（読み上げだけ）' }]
+    .concat((state.sounds.builtin || []).map((s) => ({ value: s.ref, label: s.label })));
+  fillSelect($('#ai-brief-sound'), sounds, b.sound || '');
+  if (!b.sound) $('#ai-brief-sound').value = '';
+  $('#ai-brief-desc').textContent = (aiLastText ? `今日のお知らせ：「${aiLastText}」 ` : '')
+    + `${b.time} に、カレンダー連携で選んだカレンダーの今日の予定をまとめて、既定の声で読み上げます。`;
 }
 
 const TTS_IDLE_OPTIONS = [['0', '休ませない'], ['10', '10分使わなかったら'], ['30', '30分使わなかったら'],
@@ -1880,6 +1923,43 @@ function wire() {
       .then(() => toast('再生しました')).catch(fail);
   });
   $('#set-rate').addEventListener('input', (e) => { $('#rate-out').textContent = e.target.value; setRangeFill(e.target); });
+  $('#ai-enabled').addEventListener('click', () => {
+    const on = !isOn($('#ai-enabled'));
+    setSwitch($('#ai-enabled'), on);
+    saveAI({ enabled: on }, on ? 'AI 連携をオンにしました' : 'AI 連携をオフにしました');
+  });
+  $('#ai-url').addEventListener('change', (e) => saveAI({ url: e.target.value.trim() }, '保存しました'));
+  $('#ai-model').addEventListener('change', (e) => saveAI({ model: e.target.value.trim() }, '保存しました'));
+  $('#ai-check').addEventListener('click', async () => {
+    const btn = $('#ai-check');
+    btn.disabled = true;
+    try {
+      const r = await api('POST', '/api/ai/check', {});
+      toast(r.ok ? `つながりました（モデル: ${r.model}）` : (r.error || 'モデルが見つかりません'), !r.ok);
+    } catch (e) { fail(e); } finally { btn.disabled = false; }
+  });
+  $('#ai-brief').addEventListener('click', () => {
+    const on = !isOn($('#ai-brief'));
+    setSwitch($('#ai-brief'), on);
+    saveAI({ briefing: { enabled: on } }, on ? '朝のお知らせをオンにしました' : '朝のお知らせをオフにしました');
+  });
+  $('#ai-brief-time').addEventListener('change', (e) => { if (e.target.value) saveAI({ briefing: { time: e.target.value } }, '保存しました'); });
+  $('#ai-brief-days').addEventListener('change', (e) => saveAI({ briefing: { days: e.target.value.split(',').map(Number) } }, '保存しました'));
+  $('#ai-brief-sound').addEventListener('change', (e) => saveAI({ briefing: { sound: e.target.value } }, '保存しました'));
+  $('#ai-brief-try').addEventListener('click', async () => {
+    const btn = $('#ai-brief-try');
+    btn.disabled = true;
+    btn.textContent = '作っています…';
+    try {
+      const r = await api('POST', '/api/ai/briefing', { play: true });
+      aiLastText = r.text;
+      renderAISettings();
+      toast('Mac で再生します');
+    } catch (e) { fail(e); } finally {
+      btn.disabled = false;
+      btn.textContent = '今日のお知らせを作って鳴らす';
+    }
+  });
   $('#cal-enabled').addEventListener('click', () => {
     const on = !isOn($('#cal-enabled'));
     setSwitch($('#cal-enabled'), on);
