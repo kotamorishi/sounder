@@ -832,8 +832,9 @@ function renderTimeline(scroll) {
       (chimeRows[key] ||= []).push(e);
     } else if (e.tag === 'main') {
       // カレンダーの予定は、読み上げの時刻（点）ではなく予定そのものの開始時刻にカードを置く
-      const min = e.source === 'calendar' && (e.starts_at || '').slice(0, 10) === tlDay ? minOf(e.starts_at) : minOf(e.at);
-      items.push({ min, node: tlCard(e, leadsByMain[`${e.schedule_id}|${e.at}`] || [], byId[e.schedule_id]) });
+      const span = e.source === 'calendar' && (e.starts_at || '').slice(0, 10) === tlDay;
+      items.push({ min: span ? minOf(e.starts_at) : minOf(e.at), span,
+        node: tlCard(e, leadsByMain[`${e.schedule_id}|${e.at}`] || [], byId[e.schedule_id]) });
     } else if (e.tag === 'lead' && e.kind !== 'interval' && e.main_at.slice(0, 10) !== tlDay) {
       // 本番が翌日（0 時台）の予告は単独で出す
       items.push({ min: minOf(e.at), node: tlLeadOnly(e, byId[e.schedule_id]) });
@@ -869,7 +870,8 @@ function renderTimeline(scroll) {
   const GAP = 8;
   items.forEach((it, i) => {
     let shift = segs[segs.length - 1].shift;
-    const lift = it.now ? 10 : 14; // 時刻の位置からどれだけ上に出すか
+    // 時刻の位置からどれだけ上に出すか（時間帯で置くカードは、上の端をちょうど開始時刻に合わせる）
+    const lift = it.now ? 10 : it.span ? 0 : 14;
     const ideal = it.min * PX_PER_MIN + shift - lift;
     if (ideal < cursor) {
       shift += cursor - ideal;
@@ -938,7 +940,7 @@ function tlCard(e, leads, sched) {
   if (cal && e.ends_at && e.ends_at.slice(0, 10) === e.starts_at.slice(0, 10)) {
     // 予定の長さぶんの高さにする（1 時間の予定なら 1 時間ぶん）
     const mins = (SL.parseLocal(e.ends_at) - SL.parseLocal(e.starts_at)) / 60000;
-    if (mins > 0) b.style.minHeight = `${Math.round(mins * PX_PER_MIN) - 4}px`;
+    if (mins > 0) b.style.minHeight = `${Math.round(mins * PX_PER_MIN)}px`;
   }
   if (sched) {
     const a = sched.action || {};
