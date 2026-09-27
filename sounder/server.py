@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from . import scheduler as sched_mod
 from . import ai as ai_mod
 from . import calendarfeed, daysoff, neural, tones
+from . import weather as weather_mod
 from .config import Store, ValidationError
 from .eventlog import EventLog
 from .player import Player, SoundNotFound
@@ -68,7 +69,12 @@ class App:
         # 保存時にサウンドの存在を確かめる（鳴らす瞬間に気づくのでは遅い）
         self.store = Store(home / "data" / "config.json", sound_check=self.player.resolve)
         self.calendar = calendarfeed.CalendarFeed(home / "data" / "calendar.json")
-        self.ai = ai_mod.AI(self.calendar, log=self.log, store=self.store)
+        # SOUNDER_WEATHER_APP で補助アプリの場所を変えられる（テストは存在しない場所を渡す）
+        self.weather = weather_mod.Weather(home / "data" / "weather.json", Path(
+            os.environ.get("SOUNDER_WEATHER_APP")
+            or Path(__file__).resolve().parent.parent / "tools" / "weather" / "build" / "Release"
+            / "SounderWeather.app" / "Contents" / "MacOS" / "SounderWeather"))
+        self.ai = ai_mod.AI(self.calendar, log=self.log, store=self.store, weather=self.weather)
         self.scheduler = Scheduler(self.store, self.player, self.log, feed=self.calendar,
                                    extra_feeds=[self.ai])
         self.token = token
@@ -340,7 +346,21 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
         if parts == ["settings"] and method in ("PUT", "PATCH"):
-            self._json({"settings": app.store.update_settings(self._json_body())})
+            body = self._json_body()
+            settings = app.store.update_settings(body)
+            if "weather" in body and app.weather.installed():
+                app.weather.refresh()   # 地点を変えたら、すぐに天気を取り直す
+            self._json({"settings": settings})
+            return
+
+        if parts == ["weather", "locate"] and method == "POST":
+            query = (self._json_body().get("query") or "").strip()
+            if not query:
+                raise ValidationError("地名を入れてください")
+            try:
+                self._json({"found": app.weather.geocode(query[:100])})
+            except ValueError as exc:
+                raise ValidationError(str(exc))
             return
 
         if parts == ["schedules"]:
@@ -472,6 +492,7 @@ class Handler(BaseHTTPRequestHandler):
             "voices": app.player.voices(),
             "calendars": daysoff.catalog(),
             "calendar_feed": app.calendar.status(),
+            "weather": app.weather.status(app.store.settings),
             "next_events": sched_mod.next_events(
                 app.scheduler.all_schedules(), limit=6, settings=app.store.settings),
             "log": app.log.recent(30),

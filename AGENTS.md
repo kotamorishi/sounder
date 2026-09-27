@@ -150,6 +150,24 @@ curl -s -o /dev/null -w "%{http_code}\n" "https://<DNSName>/?t=$TOKEN"   # 確�
 👤 スマホにも Tailscale を入れて同じアカウントでログイン → `https://<DNSName>/?t=<合言葉>` を開く →
 共有メニュー「ホーム画面に追加」（Android の Chrome は「アプリをインストール」）。iPhone のホーム画面版は Cookie が別なので初回だけ合言葉を入力。
 
+## 6b. 天気（任意・WeatherKit。Apple Developer Program が必要）
+
+朝のお知らせに今日の天気を入れる。天気アプリと同じ Apple の天気を WeatherKit で取る。
+
+```sh
+# 👤 先に Xcode → 設定 → Accounts で有料の開発者アカウントにサインインしておく
+scripts/install-weather.sh      # tools/weather の Xcode プロジェクトを自動署名でビルドし、30 分ごとの LaunchAgent を登録
+```
+
+- 👤 初回のビルドで Mac の画面にキーチェーンの確認が出る。ログインパスワードを入れて「常に許可」。
+- 👤 Apple Developer の Certificates, Identifiers & Profiles → Identifiers で `com.<チームID>.sounder.weather` を開き、
+  **Capabilities と App Services の両方で WeatherKit をオン**。有効になるまで 30 分ほどかかることがある。
+  それまでは `data/weather.json` が `"status": "error"`（`WDSJWTAuthenticatorServiceListener`）になる。
+- ビルドは `-scheme` と `-destination 'platform=macOS'` を付けること（付けないとこの Mac が開発用の機器に登録されず、起動時に強制終了される）。
+- 👤 場所は画面の 設定 → 天気 で地名を入れて探す（Apple の地名検索。位置情報の許可は不要）。
+- 確認: `python3 -c "import json;print(json.load(open('data/weather.json'))['status'])"` が `ok`。
+- 天気を画面に出すときは Apple Weather の表記とデータの出どころへのリンクが要る（設定画面に入れてある）。
+
 ## 7b. AI 連携（任意）
 
 OpenAI 互換の API（vLLM・Ollama・LM Studio など）を持つ AI サーバがあれば、朝に今日の予定をまとめて読み上げられる。

@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ["SOUNDER_TTS_URL"] = "http://127.0.0.1:9"
 os.environ["SOUNDER_AIVIS_URL"] = "http://127.0.0.1:9"
 os.environ["SOUNDER_MANAGE_TTS"] = "0"
+os.environ["SOUNDER_WEATHER_APP"] = "/nonexistent/SounderWeather"
 
 from sounder import server as server_mod  # noqa: E402
 

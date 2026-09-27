@@ -614,6 +614,7 @@ function renderSettings() {
   renderDesigned();
   renderCalendarSettings();
   renderAISettings();
+  renderWeatherSettings();
   const neural = state.voices.filter((v) => 'asleep' in v);
   $('#tts-idle-block').hidden = !neural.length;
   const idle = String(st.tts_idle_minutes ?? 30);
@@ -1238,6 +1239,53 @@ function renderCalendarSettings() {
     + `声は既定の声（${voiceLabel(state.settings.default_voice) || 'システム既定'}）で読みます。`
     + `タイトルに日本語が無い予定は英語で読みます（例：「NBS starts in ${lead || 10} minutes.」）。終日の予定は読みません。`
     + `禁止時間と「すべての予定を鳴らす」の設定にも従います。予定は 5 分ごとに Mac のカレンダーから読み直します（最終 ${when}）。`;
+}
+
+// --- 天気（WeatherKit の補助アプリ）
+function renderWeatherSettings() {
+  const w = state.weather || {};
+  $('#weather-block').hidden = !w.installed;
+  if (!w.installed) return;
+  const loc = w.location || {};
+  if (document.activeElement !== $('#weather-q') && !$('#weather-q').value) $('#weather-q').value = loc.name || '';
+  const box = $('#weather-desc');
+  box.textContent = '';
+  let msg;
+  if (loc.lat == null) msg = '天気を取る場所を決めてください。朝のお知らせで今日の天気も伝えます。';
+  else if (w.status === 'ok') msg = `${loc.name}：${w.summary}。30 分ごとに更新（最終 ${SL.fmtWhen((w.generated || '').slice(0, 19))}）。`;
+  else if (w.status === 'error') msg = `天気を取れませんでした（${w.error || ''}）。Apple Developer で WeatherKit がオンになっているか確かめてください。`;
+  else msg = `${loc.name}：天気を取りに行っています…`;
+  box.append(el('span', null, msg + ' '));
+  // Apple Weather の表示と、データの出どころへのリンク（WeatherKit の決まり）
+  const a = document.createElement('a');
+  a.href = (w.attribution && w.attribution.legal_url) || 'https://weatherkit.apple.com/legal-attribution.html';
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.textContent = ' Weather のデータについて';
+  box.append(a);
+}
+
+async function findWeatherPlace() {
+  const q = $('#weather-q').value.trim();
+  if (!q) { toast('地名を入れてください', true); return; }
+  const btn = $('#weather-find');
+  btn.disabled = true;
+  try {
+    const r = await api('POST', '/api/weather/locate', { query: q });
+    const box = $('#weather-found');
+    box.textContent = '';
+    if (!r.found.length) { toast('見つかりませんでした', true); return; }
+    const pick = async (f) => {
+      box.textContent = '';
+      $('#weather-q').value = f.name;
+      await saveSettings({ weather: f }, `場所を ${f.name} にしました`);
+    };
+    if (r.found.length === 1) { await pick(r.found[0]); return; }
+    for (const f of r.found) {
+      const c = checkCell(f.name, false, () => pick(f), `${f.lat}, ${f.lon}`);
+      box.append(c);
+    }
+  } catch (e) { fail(e); } finally { btn.disabled = false; }
 }
 
 // --- AI 連携（オプション）
@@ -1923,6 +1971,8 @@ function wire() {
       .then(() => toast('再生しました')).catch(fail);
   });
   $('#set-rate').addEventListener('input', (e) => { $('#rate-out').textContent = e.target.value; setRangeFill(e.target); });
+  $('#weather-find').addEventListener('click', findWeatherPlace);
+  $('#weather-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); findWeatherPlace(); } });
   $('#ai-enabled').addEventListener('click', () => {
     const on = !isOn($('#ai-enabled'));
     setSwitch($('#ai-enabled'), on);

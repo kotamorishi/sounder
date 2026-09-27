@@ -36,6 +36,7 @@ git clone https://github.com/kotamorishi/sounder.git && cd sounder
 | 日本語の声を増やす | AivisSpeech（AivisHub の声を追加できる） | AivisSpeech.app |
 | カレンダー連携 | Mac のカレンダー（iCloud の共有カレンダーも）の予定を N 分前に読み上げ | Xcode か Command Line Tools |
 | 効果音 | 効果音ラボの約 1,400 種を各自の Mac に取り込み | ネット接続（取り込み時のみ） |
+| 天気 | 朝のお知らせに今日の天気（WeatherKit）。雨の時間帯なら傘をすすめる | Apple Developer Program・Xcode |
 | AI（オプション） | 朝に今日の予定をまとめて読み上げ（祝日・休校日にも触れる）。OpenAI 互換の API（vLLM・Ollama など）を使う | 手元の AI サーバ |
 | スマホ・外出先 | Tailscale の HTTPS で PWA として使う | Tailscale |
 

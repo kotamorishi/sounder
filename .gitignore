@@ -13,3 +13,8 @@ sounds/effects/
 
 # カレンダー連携の補助アプリのビルド結果
 tools/calendar/build/
+
+# 天気の補助アプリ（Xcode）のビルド結果と個人の設定
+tools/weather/build/
+tools/weather/SounderWeather.xcodeproj/xcuserdata/
+tools/weather/SounderWeather.xcodeproj/project.xcworkspace/

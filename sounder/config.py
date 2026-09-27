@@ -14,6 +14,7 @@ from typing import Any
 
 from . import ai as ai_mod
 from . import calendarfeed, daysoff
+from . import weather as weather_mod
 
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -36,6 +37,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "calendar": dict(calendarfeed.DEFAULTS),
     # AI との連携（オプション。既定はオフ）
     "ai": json.loads(json.dumps(ai_mod.DEFAULTS)),
+    # 天気を取る地点（天気の補助アプリ SounderWeather.app が読む）
+    "weather": dict(weather_mod.DEFAULTS),
 }
 
 
@@ -255,6 +258,21 @@ def validate_settings(raw: Any, current: dict[str, Any]) -> dict[str, Any]:
                 "voice": (b.get("voice", cb["voice"]) or "").strip()[:80],
             },
         }
+    if "weather" in raw:
+        w = raw["weather"] or {}
+        if not isinstance(w, dict):
+            raise ValidationError("天気の設定が不正です")
+        lat, lon = w.get("lat"), w.get("lon")
+        if lat is None or lon is None:
+            lat = lon = None
+        else:
+            try:
+                lat, lon = round(float(lat), 4), round(float(lon), 4)
+            except (TypeError, ValueError):
+                raise ValidationError("緯度・経度は数で指定してください")
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                raise ValidationError("緯度・経度の範囲が不正です")
+        out["weather"] = {"name": (w.get("name") or "").strip()[:80], "lat": lat, "lon": lon}
     if "tts_idle_minutes" in raw:
         out["tts_idle_minutes"] = _int_in(raw["tts_idle_minutes"], 0, 1440, "休ませるまでの時間",
                                           current["tts_idle_minutes"])
