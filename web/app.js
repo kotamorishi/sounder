@@ -1319,13 +1319,15 @@ function renderAISettings() {
   const b = a.briefing;
   setSwitch($('#ai-brief'), !!b.enabled);
   if (document.activeElement !== $('#ai-brief-time')) $('#ai-brief-time').value = b.time;
+  if (document.activeElement !== $('#ai-brief-off')) $('#ai-brief-off').value = b.holiday_time || '';
   fillSelect($('#ai-brief-days'), AI_DAYS, (b.days || []).join(','));
   const sounds = [{ value: '', label: 'なし（読み上げだけ）' }]
     .concat((state.sounds.builtin || []).map((s) => ({ value: s.ref, label: s.label })));
   fillSelect($('#ai-brief-sound'), sounds, b.sound || '');
   if (!b.sound) $('#ai-brief-sound').value = '';
   $('#ai-brief-desc').textContent = (aiLastText ? `今日のお知らせ：「${aiLastText}」 ` : '')
-    + `${b.time} に、カレンダー連携で選んだカレンダーの今日の予定をまとめて、既定の声で読み上げます。`;
+    + `${b.time} に、今日の天気と、カレンダー連携で選んだカレンダーの今日の予定をまとめて、既定の声で読み上げます。`
+    + (b.holiday_time ? `土日と祝日（オンタリオ州）は ${b.holiday_time} に鳴らします（学校だけの休みはいつもの時刻）。` : '休みの日の時刻を入れると、土日と祝日だけその時刻に鳴らします。');
 }
 
 const TTS_IDLE_OPTIONS = [['0', '休ませない'], ['10', '10分使わなかったら'], ['30', '30分使わなかったら'],
@@ -1994,6 +1996,7 @@ function wire() {
     saveAI({ briefing: { enabled: on } }, on ? '朝のお知らせをオンにしました' : '朝のお知らせをオフにしました');
   });
   $('#ai-brief-time').addEventListener('change', (e) => { if (e.target.value) saveAI({ briefing: { time: e.target.value } }, '保存しました'); });
+  $('#ai-brief-off').addEventListener('change', (e) => saveAI({ briefing: { holiday_time: e.target.value } }, '保存しました'));
   $('#ai-brief-days').addEventListener('change', (e) => saveAI({ briefing: { days: e.target.value.split(',').map(Number) } }, '保存しました'));
   $('#ai-brief-sound').addEventListener('change', (e) => saveAI({ briefing: { sound: e.target.value } }, '保存しました'));
   $('#ai-brief-try').addEventListener('click', async () => {

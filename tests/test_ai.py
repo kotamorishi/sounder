@@ -163,6 +163,52 @@ class TestSchedules(Base):
         self.assertFalse(self.ai.check(bad)["ok"])
 
 
+class TestDayOffTime(Base):
+    def setUp(self):
+        super().setUp()
+        self.settings["ai"]["briefing"]["holiday_time"] = "11:00"
+
+    def test_is_day_off(self):
+        self.assertTrue(ai.is_day_off(date(2026, 10, 12)))    # サンクスギビング（月）
+        self.assertTrue(ai.is_day_off(date(2026, 9, 26)))     # 土曜
+        self.assertFalse(ai.is_day_off(date(2026, 11, 20)))   # PA デー（学校だけの休み）は含めない
+        self.assertFalse(ai.is_day_off(date(2026, 9, 29)))
+
+    def test_briefing_time(self):
+        b = ai.settings_of(self.settings)["briefing"]
+        self.assertEqual(ai.briefing_time(b, date(2026, 10, 12)), "11:00")
+        self.assertEqual(ai.briefing_time(b, date(2026, 9, 29)), "07:30")
+        b["holiday_time"] = ""
+        self.assertEqual(ai.briefing_time(b, date(2026, 10, 12)), "07:30")
+
+    def test_schedules_split_weekdays_weekends_and_weekday_holidays(self):
+        out = {s["id"]: s for s in self.ai.schedules(self.settings)}
+        self.assertEqual((out["ai-briefing"]["time"], out["ai-briefing"]["days"], out["ai-briefing"]["skip"]),
+                         ("07:30", [0, 1, 2, 3, 4], ["on_holidays"]))
+        self.assertEqual((out["ai-briefing-weekend"]["time"], out["ai-briefing-weekend"]["days"]),
+                         ("11:00", [5, 6]))
+        for sid, s in out.items():
+            if sid.startswith("ai-briefing-2"):
+                d = date.fromisoformat(s["date"])
+                self.assertTrue(d.weekday() < 5 and ai.is_day_off(d))
+                self.assertEqual((s["kind"], s["time"]), ("once", "11:00"))
+
+    def test_same_time_means_one_schedule(self):
+        self.settings["ai"]["briefing"]["holiday_time"] = "07:30"
+        self.assertEqual([s["id"] for s in self.ai.schedules(self.settings)], ["ai-briefing"])
+
+    def test_prepare_uses_the_day_off_time(self):
+        sat = TODAY + timedelta(days=(5 - TODAY.weekday()) % 7)
+        self.ai.prepare(datetime.combine(sat, datetime.strptime("07:25", "%H:%M").time()), self.settings)
+        time.sleep(0.2)
+        self.assertEqual(FakeLLM.prompts, [])                  # 土曜の 7:25 には作らない
+        self.ai.prepare(datetime.combine(sat, datetime.strptime("10:55", "%H:%M").time()), self.settings)
+        end = time.time() + 5
+        while time.time() < end and not FakeLLM.prompts:
+            time.sleep(0.05)
+        self.assertEqual(len(FakeLLM.prompts), 1)
+
+
 class TestSettings(unittest.TestCase):
     def test_validate_and_survive_restart(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -172,6 +218,11 @@ class TestSettings(unittest.TestCase):
             self.assertTrue(a["enabled"])
             self.assertEqual(a["briefing"]["time"], "06:45")
             self.assertEqual(a["url"], "http://spark-1:8000/v1")
+            self.assertEqual(a["briefing"]["holiday_time"], "")
+            config.Store(path).update_settings({"ai": {"briefing": {"holiday_time": "11:00"}}})
+            self.assertEqual(config.Store(path).settings["ai"]["briefing"]["holiday_time"], "11:00")
+            config.Store(path).update_settings({"ai": {"briefing": {"holiday_time": ""}}})
+            self.assertEqual(config.Store(path).settings["ai"]["briefing"]["holiday_time"], "")
 
     def test_rejects_bad_values(self):
         cur = dict(config.DEFAULT_SETTINGS)

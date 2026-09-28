@@ -253,6 +253,8 @@ def validate_settings(raw: Any, current: dict[str, Any]) -> dict[str, Any]:
             "briefing": {
                 "enabled": bool(b.get("enabled", cb["enabled"])),
                 "time": _time(b.get("time", cb["time"]), "朝のお知らせの時刻"),
+                "holiday_time": (_time(b["holiday_time"], "休みの日の時刻") if b.get("holiday_time")
+                                 else "" if "holiday_time" in b else cb.get("holiday_time", "")),
                 "days": _days(b.get("days", cb["days"]), required=True),
                 "sound": (b.get("sound", cb["sound"]) or "").strip()[:300],
                 "voice": (b.get("voice", cb["voice"]) or "").strip()[:80],

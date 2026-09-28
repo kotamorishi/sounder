@@ -27,6 +27,8 @@ DEFAULTS = {
     "model": "",                       # "" なら /models の最初のもの
     "api_key": "",
     "briefing": {"enabled": False, "time": "07:30", "days": [0, 1, 2, 3, 4, 5, 6],
+                 # 休みの日（土日とオンタリオ州の祝日）の時刻。"" ならいつもと同じ
+                 "holiday_time": "",
                  "sound": "builtin:melody_morning", "voice": ""},
 }
 WEEKDAYS = "月火水木金土日"
@@ -38,6 +40,16 @@ def settings_of(settings: dict) -> dict:
     cfg = {**DEFAULTS, **(settings.get("ai") or {})}
     cfg["briefing"] = {**DEFAULTS["briefing"], **(cfg.get("briefing") or {})}
     return cfg
+
+
+def is_day_off(day: date) -> bool:
+    """休みの日（土日・オンタリオ州の祝日と振替休日）。学校だけの休み（PA デーなど）は含めない。"""
+    return day.weekday() >= 5 or bool(daysoff.reason("on_holidays", day))
+
+
+def briefing_time(b: dict, day: date) -> str:
+    """その日にお知らせを鳴らす時刻（HH:MM）。"""
+    return b["holiday_time"] if b.get("holiday_time") and is_day_off(day) else b["time"]
 
 
 def _clock(hhmm: str) -> str:
@@ -217,17 +229,35 @@ class AI:
         if not cfg["enabled"] or not b["enabled"]:
             return []
         now = datetime.now()
-        at = datetime.combine(now.date(), datetime.strptime(b["time"], "%H:%M").time())
-        day = now.date() if now <= at + timedelta(minutes=5) else now.date() + timedelta(days=1)
+        today = now.date()
+        at = datetime.combine(today, datetime.strptime(briefing_time(b, today), "%H:%M").time())
+        day = today if now <= at + timedelta(minutes=5) else today + timedelta(days=1)
         info = self._day(settings, day)
         with self._lock:
             text = self._texts.get(self._key(info)) or self.fallback(info)
-        return [{
-            "id": "ai-briefing", "source": "ai", "enabled": True, "kind": "weekly",
-            "name": "今日の予定のお知らせ", "time": b["time"], "days": sorted(b["days"]),
-            "lead_times": [], "lead_action": None, "skip": [],
-            "action": self.briefing_action(settings, text),
-        }]
+        base = {"source": "ai", "enabled": True, "name": "今日の予定のお知らせ",
+                "lead_times": [], "lead_action": None, "skip": [],
+                "action": self.briefing_action(settings, text)}
+        days = sorted(b["days"])
+        off = b.get("holiday_time")
+        if not off or off == b["time"]:
+            return [{**base, "id": "ai-briefing", "kind": "weekly", "time": b["time"], "days": days}]
+        # 休みの日だけ時刻を変える: 平日（祝日を除く）・土日・平日の祝日（2 週間先まで 1 回ずつ）に分ける
+        out = []
+        weekdays = [d for d in days if d < 5]
+        weekend = [d for d in days if d >= 5]
+        if weekdays:
+            out.append({**base, "id": "ai-briefing", "kind": "weekly", "time": b["time"],
+                        "days": weekdays, "skip": ["on_holidays"]})
+        if weekend:
+            out.append({**base, "id": "ai-briefing-weekend", "kind": "weekly", "time": off,
+                        "days": weekend})
+        for i in range(15):
+            d = today + timedelta(days=i)
+            if d.weekday() < 5 and d.weekday() in days and daysoff.reason("on_holidays", d):
+                out.append({**base, "id": f"ai-briefing-{d.isoformat()}", "kind": "once",
+                            "date": d.isoformat(), "time": off})
+        return out
 
     @staticmethod
     def briefing_action(settings: dict, text: str) -> dict:
@@ -245,6 +275,6 @@ class AI:
         b = cfg["briefing"]
         if not cfg["enabled"] or not b["enabled"] or now.weekday() not in b["days"]:
             return
-        at = datetime.combine(now.date(), datetime.strptime(b["time"], "%H:%M").time())
+        at = datetime.combine(now.date(), datetime.strptime(briefing_time(b, now.date()), "%H:%M").time())
         if timedelta(0) <= at - now <= timedelta(seconds=PREPARE_AHEAD):
             self.briefing_text(settings, now.date())
