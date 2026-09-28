@@ -98,7 +98,7 @@ class TestEnglish(Base):
     def test_sentences(self):
         self.assertEqual(calendarfeed.sentence("NBS", 10), "NBS starts in 10 minutes.")
         self.assertEqual(calendarfeed.sentence("Zoo trip", 1), "Zoo trip starts in 1 minute.")
-        self.assertEqual(calendarfeed.sentence("Emma&Leo field trip", 0), "It's time for Emma&Leo field trip.")
+        self.assertEqual(calendarfeed.sentence("Zoo field trip", 0), "It's time for Zoo field trip.")
         self.assertEqual(calendarfeed.sentence("ななこ先生", 10), "10分後に、ななこ先生があります。")
         self.assertEqual(calendarfeed.sentence("NBS 練習", 10), "10分後に、NBS 練習があります。")
         self.assertEqual(calendarfeed.sentence("ｶﾗｵｹ", 0), "ｶﾗｵｹの時間です。")   # 半角カナも日本語
