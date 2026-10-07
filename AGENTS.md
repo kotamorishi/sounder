@@ -189,6 +189,9 @@ launchctl kickstart -k gui/$(id -u)/com.local.sounder    # コードを更新し
 launchctl kill SIGTERM gui/$(id -u)/com.local.sounder-tts   # tts/qwen_server.py を更新したら（次に使うとき新しいコードで起きる）
 ```
 
+- 読み上げて、本当に鳴ったか確かめる: `POST /api/speak {"text":"…"}` → `job.id` を `GET /api/jobs/<id>` で見る
+  （`state` が queued → preparing → playing → `done`（afplay が正常終了）/ `failed`（`reason`）/ `stopped`）。
+  返り値の `system` に Mac 本体の音量とミュート（0 やミュートなら音は出ていない）。
 - 解除: `scripts/uninstall-service.sh` / `uninstall-tts.sh` / `uninstall-aivis.sh` / `uninstall-calendar.sh`。
 - 環境変数（通常は不要）: `SOUNDER_HOME`（データの置き場）、`SOUNDER_TOKEN`、`SOUNDER_TTS_URL`、`SOUNDER_AIVIS_URL`、
   `SOUNDER_MANAGE_TTS=0`（エンジンを起こす・止めるをしない。テストはこれで本物の LaunchAgent に触らない）。

@@ -455,16 +455,87 @@ class TestQueue(Base):
         real = self.p.play_blocking
         calls = []
 
-        def flaky(action, *, settings, label=""):
+        def flaky(action, *, settings, label="", jid=None):
             calls.append(action["sound"])
             if len(calls) == 1:
                 raise RuntimeError("わざと失敗")
-            return real(action, settings=settings, label=label)
+            return real(action, settings=settings, label=label, jid=jid)
         self.p.play_blocking = flaky
-        self.p.play(self.sound(), settings=self.settings, queue=True)
+        first = self.p.play(self.sound(), settings=self.settings, queue=True)
         self.p.play(self.sound("builtin:doorbell"), settings=self.settings, queue=True)
         end = time.time() + 5
         while len(calls) < 2 and time.time() < end:
             time.sleep(0.02)
         self.assertEqual(calls, ["builtin:ding", "builtin:doorbell"])
         self.assertTrue(any("再生中にエラー" in m for _lv, m in self.msgs))
+        self.assertEqual(self.p.job(first)["state"], "failed")
+
+
+class TestJobs(Base):
+    """再生の記録（画面から「本当に鳴ったか」を確かめるため）。"""
+    settings = {"default_volume": 0.6, "default_voice": "Kyoko", "speak_rate": 180}
+
+    def wait_state(self, jid, states=("done", "failed", "stopped"), timeout=5.0):
+        end = time.time() + timeout
+        while time.time() < end:
+            j = self.p.job(jid)
+            if j and j["state"] in states:
+                return j
+            time.sleep(0.02)
+        return self.p.job(jid)
+
+    def test_done_after_afplay_finishes(self):
+        jid = self.p.play({"type": "speak", "text": "ご飯です"}, settings=self.settings, kind="speak")
+        j = self.wait_state(jid)
+        self.assertEqual(j["state"], "done")
+        self.assertEqual(j["text"], "ご飯です")
+        self.assertIn("seconds", j)
+        self.assertTrue(j["started"] <= j["finished"])
+        self.assertTrue(any("読み上げを再生しました" in m for _lv, m in self.msgs))
+
+    def test_failed_when_nothing_can_be_played(self):
+        jid = self.p.play({"type": "sound", "sound": "builtin:nope"}, settings=self.settings)
+        j = self.wait_state(jid)
+        self.assertEqual(j["state"], "failed")
+        self.assertIn("nope", j["reason"])
+
+    def test_failed_when_afplay_fails(self):
+        self.p.afplay = self._script("afplay_bad", "#!/bin/sh\necho 'no device' >&2\nexit 1\n")
+        jid = self.p.play({"type": "sound", "sound": "builtin:ding"}, settings=self.settings, kind="speak")
+        j = self.wait_state(jid)
+        self.assertEqual(j["state"], "failed")
+        self.assertIn("終了コード 1", j["reason"])
+        self.assertIn("no device", j["reason"])
+
+    def test_stopped(self):
+        self.p.afplay = self._script("afplay_slow", "#!/bin/sh\nsleep 5\n")
+        jid = self.p.play({"type": "sound", "sound": "builtin:ding"}, settings=self.settings)
+        self.wait_state(jid, states=("playing",))
+        self.p.stop()
+        self.assertEqual(self.wait_state(jid)["state"], "stopped")
+
+    def test_queued_items_cancelled_by_stop(self):
+        self.p.afplay = self._script("afplay_slow2", "#!/bin/sh\nsleep 5\n")
+        self.p.play({"type": "sound", "sound": "builtin:ding"}, settings=self.settings, queue=True)
+        second = self.p.play({"type": "sound", "sound": "builtin:ding"}, settings=self.settings, queue=True)
+        time.sleep(0.2)
+        self.p.stop()
+        j = self.wait_state(second)
+        self.assertEqual(j["state"], "stopped")
+
+    def test_fallback_is_noted(self):
+        from sounder import neural
+        self.p.tts = [neural.NeuralTTS(self.home / "c", url="http://127.0.0.1:9")]
+        jid = self.p.play({"type": "speak", "text": "はい", "voice": "qwen:ono_anna"}, settings=self.settings)
+        j = self.wait_state(jid)
+        self.assertEqual(j["state"], "done")
+        self.assertTrue(j["fallback"])
+        self.assertIn("標準の声", j["note"])
+
+    def test_list_newest_first_and_kept_small(self):
+        ids = [self.p.play({"type": "sound", "sound": "builtin:ding"}, settings=self.settings,
+                           queue=True, kind="speak" if i % 2 else "") for i in range(4)]
+        self.assertEqual([j["id"] for j in self.p.jobs(kind="speak")], [ids[3], ids[1]])
+        for _ in range(player_mod.JOB_KEEP + 5):
+            self.p.play({"type": "sound", "sound": "builtin:ding"}, settings=self.settings, queue=True)
+        self.assertLessEqual(len(self.p.jobs(limit=999)), player_mod.JOB_KEEP)

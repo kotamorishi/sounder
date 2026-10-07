@@ -7,7 +7,7 @@ const LEAD_CHOICES = [1, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120];
 const SOUND_GROUPS = [['ランダム', 'random'], ['内蔵', 'builtin'], ['効果音ラボ', 'effects'],
   ['自分のファイル', 'user'], ['システム', 'system']];
 const LOG_LABELS = { fired: '再生', error: 'エラー', missed: '取りこぼし', skipped: 'スキップ', test: '試聴', info: '情報' };
-const VIEWS = ['schedules', 'timeline', 'sounds', 'settings'];
+const VIEWS = ['schedules', 'timeline', 'speak', 'sounds', 'settings'];
 // 以前の画面のハッシュも受け付ける（ブックマーク用）
 const OLD_HASH = { list: 'schedules', week: 'timeline' };
 
@@ -1330,6 +1330,102 @@ function renderAISettings() {
     + (b.holiday_time ? `土日と祝日（オンタリオ州）は ${b.holiday_time} に鳴らします（学校だけの休みはいつもの時刻）。` : '休みの日の時刻を入れると、土日と祝日だけその時刻に鳴らします。');
 }
 
+// ---------------------------------------------------------------- 読み上げ（その場で）
+
+const JOB_DONE = ['done', 'failed', 'stopped'];
+let spJob = null;          // いま見ている再生の記録
+let spSystem = {};         // Mac 本体の音量
+let spTimer = null;
+
+function renderSpeak() {
+  const voices = [{ value: '', label: `既定の声（${voiceLabel(state.settings.default_voice) || 'システム既定'}）` }]
+    .concat(state.voices.map((v) => ({ value: v.name, label: v.label || v.name })));
+  const keep = $('#sp-voice').value;
+  fillSelect($('#sp-voice'), voices, keep || '');
+  if (!keep) $('#sp-voice').value = '';
+  renderSpeakStatus();
+  loadSpeakHistory();
+}
+
+function fmtJobTime(iso) { return iso ? iso.slice(11, 19) : ''; }
+
+function renderSpeakStatus() {
+  const box = $('#sp-status');
+  const j = spJob;
+  box.hidden = !j;
+  if (!j) return;
+  box.className = 'sp-status is-' + j.state;
+  box.textContent = '';
+  const msg = {
+    queued: '順番待ち…',
+    preparing: '声を作っています…（機械学習の声は数秒かかります）',
+    playing: 'Mac で再生中…',
+    done: `再生しました（${fmtJobTime(j.finished)} に終了・${j.seconds} 秒）`,
+    stopped: `止まりました：${j.reason || ''}`,
+    failed: `再生できませんでした：${j.reason || ''}`,
+  }[j.state] || j.state;
+  box.append(el('strong', null, (j.state === 'done' ? '✓ ' : j.state === 'failed' ? '✕ ' : '') + msg));
+  if (j.note) box.append(el('span', null, j.note));
+  // 音は Mac で出ていても、本体の音量が 0・ミュートなら聞こえない
+  if (spSystem.muted) box.append(el('span', 'warn', 'Mac 本体がミュートになっています。スピーカーから音は出ていません。'));
+  else if (spSystem.volume === 0) box.append(el('span', 'warn', 'Mac 本体の音量が 0 です。スピーカーから音は出ていません。'));
+  else if (spSystem.volume != null && spSystem.volume < 20) box.append(el('span', 'warn', `Mac 本体の音量が ${spSystem.volume}% と小さめです。`));
+}
+
+async function speakNow(text) {
+  text = (text ?? $('#sp-text').value).trim();
+  if (!text) { toast('読み上げる文章を入れてください', true); return; }
+  const btn = $('#sp-go');
+  btn.disabled = true;
+  try {
+    const r = await api('POST', '/api/speak', { text, voice: $('#sp-voice').value });
+    spJob = r.job;
+    spSystem = r.system || {};
+    renderSpeakStatus();
+    watchSpeakJob(r.job.id);
+  } catch (e) { fail(e); btn.disabled = false; }
+}
+
+function watchSpeakJob(id) {
+  clearTimeout(spTimer);
+  const started = Date.now();
+  const tick = async () => {
+    try {
+      const r = await api('GET', `/api/jobs/${id}`);
+      if (spJob && spJob.id === id) { spJob = r.job; renderSpeakStatus(); }
+      if (JOB_DONE.includes(r.job.state)) {
+        $('#sp-go').disabled = false;
+        loadSpeakHistory();
+        return;
+      }
+    } catch { /* 次で見る */ }
+    if (Date.now() - started < 5 * 60 * 1000) spTimer = setTimeout(tick, 500);
+    else $('#sp-go').disabled = false;
+  };
+  spTimer = setTimeout(tick, 300);
+}
+
+async function loadSpeakHistory() {
+  try {
+    const r = await api('GET', '/api/jobs?kind=speak');
+    const box = $('#sp-history');
+    box.textContent = '';
+    $('#sp-history-block').hidden = !r.jobs.length;
+    for (const j of r.jobs.slice(0, 10)) {
+      const row = el('div', 'cell sp-row');
+      const mark = { done: '✓', failed: '✕', stopped: '■' }[j.state] || '…';
+      const label = el('span', 'cell-label');
+      label.append(el('span', 'sp-row-text', j.text || ''),
+        el('span', 'cell-sub', `${mark} ${fmtJobTime(j.created)}　${{ done: '再生しました', failed: '失敗', stopped: '止めました' }[j.state] || '処理中'}`));
+      const again = el('button', 'cell-del sp-again', 'もう一度');
+      again.type = 'button';
+      again.addEventListener('click', () => { $('#sp-text').value = j.text || ''; speakNow(j.text); });
+      row.append(label, again);
+      box.append(row);
+    }
+  } catch { /* 表示しないだけ */ }
+}
+
 const TTS_IDLE_OPTIONS = [['0', '休ませない'], ['10', '10分使わなかったら'], ['30', '30分使わなかったら'],
   ['60', '1時間使わなかったら'], ['180', '3時間使わなかったら']].map(([value, label]) => ({ value, label }));
 
@@ -1893,6 +1989,7 @@ function showTab(name, fromHash) {
   currentTab = name;
   $$('.tab').forEach((t) => t.setAttribute('aria-selected', t.dataset.tab === name ? 'true' : 'false'));
   $$('.view').forEach((v) => { v.hidden = v.id !== 'view-' + name; });
+  if (name === 'speak') renderSpeak();
   if (name === 'timeline') {
     renderTimeline(false);
     loadTimeline(true);
@@ -2052,6 +2149,7 @@ function wire() {
   $('#quiet-start').addEventListener('change', saveQuiet);
   $('#quiet-end').addEventListener('change', saveQuiet);
   $('#d-make').addEventListener('click', makeVoice);
+  $('#sp-go').addEventListener('click', () => speakNow());
   $('#set-voice-btn').addEventListener('click', () => {
     renderVoiceList($('#set-voice-list'), state.settings.default_voice, (v) => { saveSettings({ default_voice: v }, '声を保存しました'); previewSpeech({ voice: v, rate: Number($('#set-rate').value), volume: Number($('#set-volume').value) }); });
     openPush('#push-voice');

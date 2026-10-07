@@ -415,6 +415,37 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True})
                 return
 
+        if parts == ["speak"] and method == "POST":
+            # 画面で入れた文章を、いま Mac で読み上げる。返した job の id で、鳴ったかどうかを確かめられる
+            body = self._json_body()
+            text = (body.get("text") or "").strip()
+            if not text:
+                raise ValidationError("読み上げる文章を入れてください")
+            if len(text) > 500:
+                raise ValidationError("文章は 500 文字までです")
+            action = {"type": "both" if body.get("sound") else "speak", "text": text,
+                      "voice": (body.get("voice") or "").strip()[:80],
+                      "rate": body.get("rate"), "repeat": 1,
+                      "volume": body.get("volume", app.store.settings["default_volume"])}
+            if body.get("sound"):
+                app.player.resolve(body["sound"])
+                action["sound"] = body["sound"]
+            jid = app.player.play(action, settings=app.store.settings, label="読み上げ", kind="speak")
+            self._json({"job": app.player.job(jid), "system": app.player.system_volume()})
+            return
+
+        if parts == ["jobs"] and method == "GET":
+            kind = (query.get("kind") or [""])[0] or None
+            self._json({"jobs": app.player.jobs(kind=kind)})
+            return
+
+        if len(parts) == 2 and parts[0] == "jobs" and method == "GET":
+            job = app.player.job(parts[1])
+            if not job:
+                raise KeyError(parts[1])
+            self._json({"job": job})
+            return
+
         if parts == ["preview"] and method == "POST":
             body = self._json_body()
             action = {

@@ -316,6 +316,22 @@ class TestSchedules(ServerCase):
         self.assertIn("ding.wav", calls)
         self.assertIn("NBS starts in 10 minutes.", calls)
 
+    def test_speak_reports_when_it_has_really_played(self):
+        r = self.ok("POST", "/api/speak", {"text": "ご飯ができました"})
+        jid = r["job"]["id"]
+        self.assertIn("system", r)
+        end = time.time() + 5
+        while time.time() < end:
+            job = self.ok("GET", f"/api/jobs/{jid}")["job"]
+            if job["state"] == "done":
+                break
+            time.sleep(0.05)
+        self.assertEqual(job["state"], "done")
+        self.assertEqual(self.ok("GET", "/api/jobs?kind=speak")["jobs"][0]["id"], jid)
+        self.err("POST", "/api/speak", {"text": "  "})
+        self.err("POST", "/api/speak", {"text": "あ" * 501})
+        self.err("GET", "/api/jobs/nope", expect=404)
+
     def test_test_falls_back_to_main_without_lead(self):
         sid = self.ok("POST", "/api/schedules",
                       self.sample(lead_times=[]))["schedule"]["id"]

@@ -6,7 +6,9 @@ import json
 import os
 import random
 import re
-from collections import deque
+import uuid
+from collections import OrderedDict, deque
+from datetime import datetime
 import shutil
 import signal
 import subprocess
@@ -25,6 +27,7 @@ SYSTEM_SOUND_DIRS = (
 )
 AUDIO_EXT = {".wav", ".aiff", ".aif", ".mp3", ".m4a", ".aac", ".caf", ".flac", ".ogg", ".mp4"}
 SAFE_NAME = re.compile(r"^[^/\\\x00]{1,120}$")
+JOB_KEEP = 50
 # 声の一覧に出す言語（ロケールの先頭）。ほかの言語の声は使わないので出さない
 VOICE_LANGS = ("ja", "en")
 
@@ -52,7 +55,9 @@ class Player:
         self._proc: subprocess.Popen | None = None
         self._job = 0
         # 同じ時刻に複数の予定が来ても打ち消し合わないよう、順番待ちに並べる
-        self._queue: deque[tuple[dict, dict, str]] = deque()
+        self._queue: deque[tuple[dict, dict, str, str]] = deque()
+        # 再生の記録（id → 状態）。「本当に鳴ったか」を画面から確かめるため。直近 JOB_KEEP 件だけ持つ
+        self._jobs: OrderedDict[str, dict] = OrderedDict()
         self._draining = False
         self._tmpdir = Path(tempfile.mkdtemp(prefix="sounder-say-"))
         self.afplay = shutil.which("afplay")
@@ -231,8 +236,7 @@ class Player:
 
     def stop(self) -> None:
         """鳴っている音を止め、順番待ちも捨てる（画面の停止ボタン）。"""
-        with self._lock:
-            self._queue.clear()
+        self._cancel_queued()
         self._stop_current()
 
     def _stop_current(self) -> None:
@@ -278,8 +282,10 @@ class Player:
             with self._lock:
                 if self._proc is proc:
                     self._proc = None
+        self._last_rc = proc.returncode
+        self._last_err = err.decode("utf-8", "replace").strip()[:200] if err else ""
         if proc.returncode not in (0, -15, 143) and err:
-            self._log("error", f"再生エラー: {err.decode('utf-8', 'replace').strip()[:200]}")
+            self._log("error", f"再生エラー: {self._last_err}")
         return job == self._job
 
     def _say_to_file(self, text: str, voice: str, rate: int) -> Path | None:
@@ -317,23 +323,90 @@ class Player:
                 pass
         return out
 
+    # --- 再生の記録 ---------------------------------------------------------
+    #
+    # state: queued（順番待ち）→ preparing（読み上げを作っている）→ playing（鳴っている）
+    #        → done（afplay が最後まで正常に終わった）/ stopped（止めた・次の再生に替わった）/ failed（理由つき）
+
+    def job(self, jid: str) -> dict | None:
+        with self._lock:
+            j = self._jobs.get(jid)
+            return dict(j) if j else None
+
+    def jobs(self, kind: str | None = None, limit: int = 20) -> list[dict]:
+        """新しい順。"""
+        with self._lock:
+            items = [dict(j) for j in reversed(self._jobs.values()) if not kind or j.get("kind") == kind]
+        return items[:limit]
+
+    def _mark(self, jid: str | None, **fields) -> None:
+        if not jid:
+            return
+        with self._lock:
+            j = self._jobs.get(jid)
+            if j is None:
+                return
+            j.update(fields)
+            j = dict(j)
+        # 画面から読み上げたものは、結果を実行ログにも残す（あとから「鳴ったか」を確かめられるように）
+        if j.get("kind") == "speak" and fields.get("state") in ("done", "failed", "stopped"):
+            text = (j.get("text") or "")[:40]
+            if j["state"] == "done":
+                self._log("info", f"読み上げを再生しました（{j.get('seconds', 0)} 秒）：「{text}」")
+            elif j["state"] == "failed":
+                self._log("error", f"読み上げを再生できませんでした（{j.get('reason', '')}）：「{text}」")
+            else:
+                self._log("info", f"読み上げを止めました：「{text}」")
+
+    def system_volume(self) -> dict:
+        """Mac 本体の出力の音量（0〜100）とミュート。分からなければ空。"""
+        try:
+            out = subprocess.run(["osascript", "-e", "get volume settings"], capture_output=True,
+                                 text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return {}
+        m = re.search(r"output volume:(\d+|missing value).*output muted:(true|false)", out)
+        if not m:
+            return {}
+        vol = int(m.group(1)) if m.group(1).isdigit() else None
+        return {"volume": vol, "muted": m.group(2) == "true"}
+
+    @staticmethod
+    def _now() -> str:
+        return datetime.now().isoformat(timespec="milliseconds")
+
     def play(self, action: dict, *, settings: dict, label: str = "",
-             queue: bool = False) -> None:
-        """action を非同期で再生する（呼び出し側はブロックしない）。
+             queue: bool = False, kind: str = "") -> str:
+        """action を非同期で再生する（呼び出し側はブロックしない）。再生の記録の id を返す。
 
         queue=True なら、鳴っているものの後ろに並べる（時刻が重なった予定用）。
         queue=False なら、鳴っているものを止めて今すぐ鳴らす（試聴用）。
         """
         if not queue:
-            with self._lock:
-                self._queue.clear()
+            self._cancel_queued()
             self._stop_current()
+        jid = uuid.uuid4().hex[:12]
         with self._lock:
-            self._queue.append((action, settings, label))
+            self._jobs[jid] = {"id": jid, "kind": kind, "label": label, "state": "queued",
+                               "text": action.get("text") if action.get("type") in ("speak", "both") else None,
+                               "voice": action.get("voice") or settings.get("default_voice") or "",
+                               "sound": action.get("sound") if action.get("type") in ("sound", "both") else None,
+                               "created": self._now()}
+            while len(self._jobs) > JOB_KEEP:
+                self._jobs.popitem(last=False)
+            self._queue.append((action, settings, label, jid))
             if self._draining:
-                return
+                return jid
             self._draining = True
         threading.Thread(target=self._drain, name="player", daemon=True).start()
+        return jid
+
+    def _cancel_queued(self) -> None:
+        with self._lock:
+            dropped = [q[3] for q in self._queue]
+            self._queue.clear()
+        for jid in dropped:
+            self._mark(jid, state="stopped", reason="順番待ちのまま取り消しました", finished=self._now())
 
     def _drain(self) -> None:
         while True:
@@ -341,15 +414,18 @@ class Player:
                 if not self._queue:
                     self._draining = False
                     return
-                action, settings, label = self._queue.popleft()
+                action, settings, label, jid = self._queue.popleft()
             try:
-                self.play_blocking(action, settings=settings, label=label)
+                self.play_blocking(action, settings=settings, label=label, jid=jid)
             except Exception as exc:  # 1 件の失敗で順番待ちを止めない
                 self._log("error", f"再生中にエラーが発生しました: {exc!r}")
+                self._mark(jid, state="failed", reason=f"再生中にエラー: {exc!r}"[:200], finished=self._now())
 
-    def play_blocking(self, action: dict, *, settings: dict, label: str = "") -> None:
+    def play_blocking(self, action: dict, *, settings: dict, label: str = "",
+                      jid: str | None = None) -> None:
         if not self.afplay:
             self._log("error", "afplay が見つかりません（macOS 以外では動きません）")
+            self._mark(jid, state="failed", reason="afplay が見つかりません", finished=self._now())
             return
         self._stop_current()
         with self._lock:
@@ -361,11 +437,13 @@ class Player:
         repeat = max(1, int(action.get("repeat", 1)))
         items: list[list[str]] = []
 
+        problems: list[str] = []
         if atype in ("sound", "both"):
             try:
                 path = self.resolve(action.get("sound", ""))
             except SoundNotFound as exc:
                 self._log("error", f"{label}: {exc}")
+                problems.append(str(exc))
                 path = None
             if path:
                 items.append([self.afplay, "-v", f"{volume:.3f}", str(path)])
@@ -374,26 +452,47 @@ class Player:
             voice = action.get("voice") or settings.get("default_voice") or ""
             rate = action.get("rate") or settings.get("speak_rate") or 180
             tmp = None
+            self._mark(jid, state="preparing", voice_used=voice)
             if neural.is_neural(voice):
                 engine = self._engine_for(voice)
                 tmp = engine.render(action["text"], voice, rate) if engine else None
+                if tmp is None:
+                    self._mark(jid, voice_used="say", fallback=True,
+                               note="選んだ声のエンジンが使えなかったので、標準の声で読みました")
                 voice = ""  # 作れなかったら say のシステム既定の声で代わりに読む
             if tmp is None:
                 tmp = self._say_to_file(action["text"], voice, rate)
+                if tmp is None:
+                    problems.append("読み上げの音声を作れませんでした")
             if tmp:
                 items.append([self.afplay, "-v", f"{volume:.3f}", str(tmp)])
 
         if not items:
+            self._mark(jid, state="failed", finished=self._now(),
+                       reason="、".join(problems) or "鳴らすものがありません")
             return
+        self._mark(jid, state="playing", started=self._now())
+        started = time.monotonic()
         for r in range(repeat):
             if r:
                 time.sleep(0.45)
                 with self._lock:
                     if job != self._job:
+                        self._mark(jid, state="stopped", reason="次の再生に替わりました", finished=self._now())
                         return
             for argv in items:
                 if not self._run(argv, job):
+                    self._mark(jid, state="stopped", finished=self._now(),
+                               reason="止めました（停止ボタンか、次の再生に替わりました）")
                     return
+                if getattr(self, "_last_rc", 0) not in (0,):
+                    self._mark(jid, state="failed", finished=self._now(),
+                               reason=f"afplay が失敗しました（終了コード {self._last_rc}）"
+                                      + (f": {self._last_err}" if self._last_err else ""))
+                    return
+        self._mark(jid, state="done", finished=self._now(),
+                   seconds=round(time.monotonic() - started, 1),
+                   **({"reason": "、".join(problems)} if problems else {}))
         # say の一時ファイルを片付ける
         for argv in items:
             p = Path(argv[-1])

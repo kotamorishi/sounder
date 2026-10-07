@@ -76,6 +76,34 @@
   </section>
 
   <!-- ===== サウンド ===== -->
+  <section class="view" id="view-speak" role="tabpanel" aria-labelledby="tab-speak" hidden>
+    <header class="navbar">
+      <div class="navbar-inner">
+        <span class="nav-spacer"></span>
+        <span class="nav-title" aria-hidden="true">読み上げ</span>
+        <span class="nav-spacer"></span>
+      </div>
+    </header>
+    <h1 class="large-title">読み上げ</h1>
+    <div class="group-block">
+      <div class="group">
+        <textarea id="sp-text" class="cell-textarea" rows="4" maxlength="500" aria-label="読み上げる文章"
+          placeholder="例）ご飯ができました。手を洗って集まってください。"></textarea>
+        <label class="cell">
+          <span class="cell-label">声</span>
+          <select class="cell-input cell-select" id="sp-voice"></select>
+        </label>
+        <button type="button" class="cell cell-button" id="sp-go">Mac で読み上げる</button>
+      </div>
+      <div class="sp-status" id="sp-status" hidden role="status" aria-live="polite"></div>
+      <p class="footnote">Mac mini のスピーカーから読み上げます。「再生しました」は、Mac で最後まで再生し終えたことを確かめてから出します。</p>
+    </div>
+    <div class="group-block" id="sp-history-block" hidden>
+      <h2 class="group-head">最近の読み上げ</h2>
+      <div class="group" id="sp-history"></div>
+    </div>
+  </section>
+
   <section class="view" id="view-sounds" role="tabpanel" aria-labelledby="tab-sounds" hidden>
     <header class="navbar">
       <div class="navbar-inner">
@@ -276,6 +304,10 @@
   <button type="button" class="tab" id="tab-timeline" role="tab" data-tab="timeline" aria-selected="false" aria-controls="view-timeline">
     <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v16M10 7h8M10 12h6M10 17h9"/></svg>
     <span>タイムライン</span>
+  </button>
+  <button type="button" class="tab" id="tab-speak" role="tab" data-tab="speak" aria-selected="false" aria-controls="view-speak">
+    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h3l4-4v14l-4-4H4z"/><path d="M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/></svg>
+    <span>読み上げ</span>
   </button>
   <button type="button" class="tab" id="tab-sounds" role="tab" data-tab="sounds" aria-selected="false" aria-controls="view-sounds">
     <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>

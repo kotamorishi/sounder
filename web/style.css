@@ -1160,3 +1160,27 @@ details.fold:not([open]) { margin-bottom: 4px; }
 
 /* カレンダー連携: 見出しと上の組のあいだ */
 #cal-list-head, #ai-brief-head { margin-top: 22px; }
+
+/* 読み上げ（その場で）: 再生の結果 */
+.sp-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 15px;
+}
+.sp-status.is-done { background: color-mix(in srgb, #2f7a4b 14%, var(--surface)); }
+.sp-status.is-done strong { color: #2f7a4b; }
+.sp-status.is-failed { background: color-mix(in srgb, var(--err) 12%, var(--surface)); }
+.sp-status.is-failed strong { color: var(--err); }
+.sp-status .warn { color: var(--err); font-size: 14px; }
+.sp-row .cell-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sp-row-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-row .cell-sub { color: var(--ink-2); font-size: 13px; }
+.sp-again { color: var(--accent); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sp-status.is-done strong { color: #7fd19b; }
+}
