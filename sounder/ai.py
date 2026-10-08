@@ -132,12 +132,13 @@ class AI:
             r = daysoff.reason(c, day)
             if r and r != "週末" and r not in notes:
                 notes.append(r if c == "on_holidays" else f"学校は{r}で休み")
-        forecast = self.weather.today_lines(day) if self.weather else []
-        return {"date": day, "events": events, "notes": notes, "weather": forecast}
+        w = self.weather.today(day) if self.weather else {}
+        return {"date": day, "events": events, "notes": notes, "weather": w.get("lines") or [],
+                "clothing": w.get("clothing") or ""}
 
     def _key(self, info: dict) -> str:
         raw = json.dumps({"d": info["date"].isoformat(), "e": info["events"], "n": info["notes"],
-                          "w": info.get("weather") or []},
+                          "w": info.get("weather") or [], "c": info.get("clothing") or ""},
                          ensure_ascii=False, sort_keys=True)
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
@@ -153,16 +154,19 @@ class AI:
                 lines.append(f"- {e['start']}〜{e['end']}: {e['title']}{loc}")
         # 祝日・休みが無い日は書かない（「祝日ではありません」と言い出すので）
         notes = f"今日の祝日・休み: {'、'.join(info['notes'])}\n" if info["notes"] else ""
-        forecast = f"今日の天気: {'。'.join(info['weather'])}\n" if info.get("weather") else ""
+        forecast = f"今日の天気（朝7時〜午後3時）: {'。'.join(info['weather'])}\n" if info.get("weather") else ""
+        wear = f"服装の目安: {info['clothing']}\n" if info.get("clothing") else ""
         return (
             f"今日は{d.year}年{d.month}月{d.day}日（{WEEKDAYS[d.weekday()]}曜日）です。\n"
-            f"{notes}{forecast}"
+            f"{notes}{forecast}{wear}"
             f"家族のカレンダーの今日の予定:\n" + ("\n".join(lines) or "（予定なし）") + "\n\n"
             "朝、家のスピーカーで読み上げる「今日の予定のお知らせ」を作ってください。\n"
             "条件: 日本語の話し言葉。30秒以内（200字程度まで）。時刻は「14時」「14時30分」のように。"
             "箇条書き・記号・絵文字・かっこ書きは使わない。英語の予定名はそのまま。"
             "祝日・休みが書いてあれば最初に触れ、書いていなければ祝日の話はしない。"
-            "天気が書いてあれば、予定の前に一言で伝え、雨や雪の可能性が高いなら傘などを勧める。"
+            "天気が書いてあれば、予定の前に、午後3時までの天気と雨の可能性を一言で伝える。"
+            "服装の目安が書いてあれば、その内容を変えずに、子どもにも分かるやさしい言い方で伝える"
+            "（例:「今日は寒いので、厚手のジャケットを着ていきましょう」）。"
             "予定が無ければ、ゆっくり過ごせる日だと短く伝える。"
             "前置きや説明は書かず、読み上げる文だけを出力する。"
         )
@@ -176,6 +180,8 @@ class AI:
             parts.append("今日は" + "、".join(info["notes"]) + "です。")
         if info.get("weather"):
             parts.append("天気は" + "。".join(info["weather"]) + "。")
+        if info.get("clothing"):
+            parts.append(info["clothing"] + "。")
         timed = [e for e in info["events"] if not e["all_day"]]
         allday = [e for e in info["events"] if e["all_day"]]
         if not info["events"]:

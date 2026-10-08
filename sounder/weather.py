@@ -43,6 +43,48 @@ def _deg(v) -> str:
     return f"{round(v)}度" if v is not None else ""
 
 
+# 朝のお知らせで見る時間帯（7 時〜15 時。子どもが学校にいる時間）
+MORNING = 7
+AFTERNOON = 15
+SNOWY = {"snow", "sleet", "hail", "mixed"}
+SNOWY_CONDITIONS = {"snow", "heavySnow", "flurries", "sunFlurries", "blizzard", "blowingSnow", "sleet",
+                    "wintryMix", "freezingRain", "freezingDrizzle"}
+
+# 体感温度（その時間帯でいちばん低い値）→ 服装。上から順に当てはまるものを使う（トロントの子ども向け）
+CLOTHING = [
+    (25, "暑いので半袖で大丈夫。水筒を忘れずに"),
+    (20, "半袖か薄い長袖で大丈夫"),
+    (15, "長袖に、薄い上着（パーカーやカーディガン）があると安心"),
+    (10, "ジャケットを着ていきましょう"),
+    (5, "寒いので厚手のジャケットを着ていきましょう"),
+    (0, "冬のジャケットに、帽子と手袋も"),
+    (-10, "とても寒いので、冬のコートに帽子・手袋・ネックウォーマー、スノーパンツも"),
+    (-99, "とても厳しい寒さです。一番暖かい冬のコート、帽子・手袋・ネックウォーマー、スノーパンツとスノーブーツで"),
+]
+
+
+def clothing(info: dict) -> str:
+    """服装の目安（決まった規則で決める。AI には言い回しだけ任せる）。"""
+    low = info.get("feels_min")
+    if low is None:
+        return ""
+    advice = next(text for limit, text in CLOTHING if low >= limit)
+    extra = []
+    high = info.get("feels_max")
+    if high is not None and high - low >= 8:
+        extra.append("朝は寒くても昼は暖かくなるので、脱ぎ着しやすい服で")
+    if info.get("snow"):
+        if "スノーパンツ" not in advice:
+            extra.append("雪の予報なので、スノーパンツとスノーブーツを")
+    elif info.get("chance", 0) >= 50:
+        extra.append("雨の予報なので、傘かレインコート、長靴を" if low < 10 else "雨の予報なので、傘を")
+    elif info.get("chance", 0) >= 30:
+        extra.append("にわか雨があるかもしれないので、折りたたみ傘があると安心")
+    if info.get("windy") and low < 15:
+        extra.append("風が強いので、フードのある上着がおすすめ")
+    return "。".join([advice] + extra)
+
+
 class Weather:
     def __init__(self, path: Path, app_path: Path) -> None:
         self.path = path
@@ -99,26 +141,60 @@ class Weather:
                               f"降水確率 {round(today.get('precipitation_chance') or 0)}%）")
         return out
 
-    def today_lines(self, day: date) -> list[str]:
-        """朝のお知らせ用の、その日の天気の説明（AI に渡す材料と、決まった文の両方に使う）。"""
+    def today(self, day: date, *, start_hour: int = MORNING, end_hour: int = AFTERNOON) -> dict:
+        """朝のお知らせ用の、その日の朝〜午後（既定 7〜15 時）の天気。分からなければ空。
+
+        lines: 天気の説明（AI に渡す材料と、決まった文の両方に使う）
+        clothing: 体感温度と雨・雪から決めた服装の目安（clothing() を参照）
+        """
         d = self.data()
         if d.get("status") != "ok":
-            return []
-        days = {str(x.get("date", ""))[:10]: x for x in d.get("days") or []}
-        t = days.get(day.isoformat())
-        if not t:
-            return []
-        lines = [f"{condition(t.get('condition'))}、最高{_deg(t.get('high_c'))}、最低{_deg(t.get('low_c'))}、"
-                 f"降水確率{round(t.get('precipitation_chance') or 0)}パーセント"]
-        # その日のうち雨や雪の確率が高い時間帯（50% 以上）
-        wet = []
+            return {}
+        hours = []
         for h in d.get("hours") or []:
             try:
                 at = datetime.fromisoformat(h["time"]).astimezone().replace(tzinfo=None)
             except (KeyError, ValueError):
                 continue
-            if at.date() == day and (h.get("precipitation_chance") or 0) >= 50:
-                wet.append(at.hour)
-        if wet:
-            lines.append(f"{wet[0]}時ごろから{wet[-1] + 1}時ごろまで雨や雪の可能性が高い")
-        return lines
+            if at.date() == day and start_hour <= at.hour < end_hour:
+                hours.append((at.hour, h))
+        days = {str(x.get("date", ""))[:10]: x for x in d.get("days") or []}
+        t = days.get(day.isoformat())
+        if not hours and not t:
+            return {}
+        if hours:
+            temps = [h.get("temperature_c") for _, h in hours if h.get("temperature_c") is not None]
+            feels = [h.get("apparent_c", h.get("temperature_c")) for _, h in hours]
+            feels = [f for f in feels if f is not None]
+            chance = max(round(h.get("precipitation_chance") or 0) for _, h in hours)
+            wet = [(hr, h) for hr, h in hours if (h.get("precipitation_chance") or 0) >= 50]
+            snow = any(h.get("precipitation") in SNOWY or h.get("condition") in SNOWY_CONDITIONS
+                       for _, h in (wet or hours) if (h.get("precipitation_chance") or 0) >= 30)
+            t = t or {}
+            # 朝の様子（いちばん早い時間）を天気の言葉に使う。時間ごとの値が無ければ一日の予報で補う
+            cond = condition(hours[0][1].get("condition") or t.get("condition"))
+            low = min(temps) if temps else t.get("low_c")
+            high = max(temps) if temps else t.get("high_c")
+            info = {"low": low, "high": high,
+                    "feels_min": min(feels) if feels else low, "feels_max": max(feels) if feels else high,
+                    "feels_morning": feels[0] if feels else low, "chance": chance, "snow": snow,
+                    "wet": [hr for hr, _ in wet], "condition": cond,
+                    "windy": max((h.get("wind_kph") or 0) for _, h in hours) >= 30}
+        else:   # 時間ごとの予報が無いとき（夜に取った分など）は一日の予報で
+            info = {"low": t.get("low_c"), "high": t.get("high_c"), "feels_min": t.get("low_c"),
+                    "feels_max": t.get("high_c"), "feels_morning": t.get("low_c"),
+                    "chance": round(t.get("precipitation_chance") or 0),
+                    "snow": t.get("condition") in SNOWY_CONDITIONS, "wet": [],
+                    "condition": condition(t.get("condition")), "windy": False}
+        lines = [f"{info['condition']}。{start_hour}時から{end_hour}時までの気温は"
+                 f"{_deg(info['low'])}から{_deg(info['high'])}（体感{_deg(info['feels_min'])}から"
+                 f"{_deg(info['feels_max'])}）、{end_hour}時までの降水確率は最大{info['chance']}パーセント"]
+        if info["wet"]:
+            kind = "雪" if info["snow"] else "雨"
+            lines.append(f"{info['wet'][0]}時ごろから{info['wet'][-1] + 1}時ごろまで{kind}の可能性が高い")
+        if info["windy"]:
+            lines.append("風が強い")
+        return {**info, "lines": lines, "clothing": clothing(info)}
+
+    def today_lines(self, day: date) -> list[str]:
+        return self.today(day).get("lines") or []

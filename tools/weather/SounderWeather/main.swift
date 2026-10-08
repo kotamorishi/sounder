@@ -111,7 +111,11 @@ do {
             "time": iso.string(from: h.date),
             "condition": h.condition.rawValue,
             "temperature_c": celsius(h.temperature),
+            // 服装の目安に使う体感温度（風・湿度込み）と、雨か雪か
+            "apparent_c": celsius(h.apparentTemperature),
             "precipitation_chance": (h.precipitationChance * 100).rounded(),
+            "precipitation": h.precipitation.rawValue,
+            "wind_kph": (h.wind.speed.converted(to: .kilometersPerHour).value).rounded(),
         ]
     }
     let attribution = try await service.attribution
