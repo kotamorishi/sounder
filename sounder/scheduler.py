@@ -295,8 +295,10 @@ class Scheduler:
     """1 秒ごとに時計を見て、その間に来た発火時刻を鳴らす。"""
 
     def __init__(self, store, player, log, *, grace: float = DEFAULT_GRACE, feed=None,
-                 extra_feeds=()) -> None:
+                 extra_feeds=(), weather=None) -> None:
         self.store = store
+        # お出かけ参考情報（予定の outing）に使う天気（weather.Weather）
+        self.weather = weather
         # 保存していない予定の出どころ。カレンダー連携（calendarfeed.CalendarFeed）や AI の朝のお知らせ（ai.AI）。
         # どれも schedules(settings) で予定を返す。prepare(now, settings) があれば毎回呼ぶ
         self.feed = feed
@@ -377,7 +379,7 @@ class Scheduler:
                 if key in self._prefetched:
                     continue
                 self._prefetched.add(key)
-                prefetch(self.action_for(sched, tag, lead, settings), settings=settings)
+                prefetch(self.action_for(sched, tag, lead, settings, when=when), settings=settings)
         if len(self._prefetched) > 4000:
             self._prefetched = set(list(self._prefetched)[-1000:])
 
@@ -399,7 +401,7 @@ class Scheduler:
             self.log("skipped", f"{label}: 禁止時間のためスキップしました", schedule_id=sched["id"])
             return
 
-        action = self.action_for(sched, tag, lead, settings)
+        action = self.action_for(sched, tag, lead, settings, when=when)
         self.log("fired", f"{label} を再生しました", schedule_id=sched["id"])
         self.player.play(action, settings=settings, label=label, queue=True)
         if sched.get("source"):
@@ -413,14 +415,30 @@ class Scheduler:
             except KeyError:
                 pass
 
-    def action_for(self, sched: dict, tag: str, lead: int, settings: dict) -> dict:
+    def action_for(self, sched: dict, tag: str, lead: int, settings: dict,
+                   when: datetime | None = None) -> dict:
+        """鳴らす中身。when はその回の時刻（予告なら予告の時刻）。お出かけ参考情報もここで足す。"""
         if tag == "main":
-            return sched["action"]
-        la = dict(sched.get("lead_action") or {"type": "sound", "sound": "builtin:melody_notice"})
-        if la.pop("speak_remaining", False):
-            text = f"{sched['name']}まで、あと{lead}分です。"
-            la = {"type": "both", "sound": la.get("sound"), "text": text,
-                  "voice": la.get("voice") or settings.get("default_voice"),
-                  "rate": settings.get("speak_rate", 180),
-                  "volume": la.get("volume", settings.get("default_volume")), "repeat": 1}
-        return la
+            action = sched["action"]
+        else:
+            action = dict(sched.get("lead_action") or {"type": "sound", "sound": "builtin:melody_notice"})
+            if action.pop("speak_remaining", False):
+                text = f"{sched['name']}まで、あと{lead}分です。"
+                action = {"type": "both", "sound": action.get("sound"), "text": text,
+                          "voice": action.get("voice") or settings.get("default_voice"),
+                          "rate": settings.get("speak_rate", 180),
+                          "volume": action.get("volume", settings.get("default_volume")), "repeat": 1}
+        if sched.get("outing") and self.weather:
+            # 出かける時刻（予告なら本番の時刻）からの天気と服装を、読み上げのあとに足す
+            when = when or datetime.now()
+            leave = when + timedelta(minutes=lead) if tag == "lead" else when
+            extra = self.weather.outing(leave)
+            if extra:
+                action = dict(action)
+                if action.get("type") in ("speak", "both") and (action.get("text") or "").strip():
+                    action["text"] = action["text"].rstrip() + " " + extra
+                else:
+                    action.update(type="both" if action.get("sound") else "speak", text=extra,
+                                  voice=action.get("voice") or settings.get("default_voice"),
+                                  rate=action.get("rate") or settings.get("speak_rate", 180))
+        return action

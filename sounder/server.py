@@ -76,7 +76,7 @@ class App:
             / "SounderWeather.app" / "Contents" / "MacOS" / "SounderWeather"))
         self.ai = ai_mod.AI(self.calendar, log=self.log, store=self.store, weather=self.weather)
         self.scheduler = Scheduler(self.store, self.player, self.log, feed=self.calendar,
-                                   extra_feeds=[self.ai])
+                                   extra_feeds=[self.ai], weather=self.weather)
         self.token = token
         self.started_at = datetime.now()
         self._pick_default_voice()
@@ -409,7 +409,7 @@ class Handler(BaseHTTPRequestHandler):
                     lead = (s.get("lead_times") or [5])[0]
                     action = app.scheduler.action_for(s, "lead", lead, app.store.settings)
                 else:
-                    action = s["action"]
+                    action = app.scheduler.action_for(s, "main", 0, app.store.settings)
                 app.player.play(action, settings=app.store.settings, label=f"試聴:{s['name']}")
                 app.log("test", f"{s['name']} を試聴しました", schedule_id=sid)
                 self._json({"ok": True})

@@ -348,6 +348,7 @@ function alarmRow(s) {
   main.append(phrased('span', 'alarm-label', labelParts));
   const detailParts = whatParts(s.action);
   if (s.lead_times && s.lead_times.length) detailParts.push(` · ${SL.leadLabel(s.lead_times)}に予告`);
+  if (s.outing) detailParts.push(' · 天気と服装も');
   main.append(phrased('span', 'alarm-detail', detailParts));
   if (warn) {
     const w = el('span', 'alarm-warn');
@@ -1493,7 +1494,7 @@ function blank() {
     date: SL.isoDate(now),
     days: [0, 1, 2, 3, 4], every_minutes: 60,
     day_of_month: String(now.getDate()), month: String(now.getMonth() + 1),
-    window: { start: '09:00', end: '21:00' }, lead_times: [], note: '', skip: [],
+    window: { start: '09:00', end: '21:00' }, lead_times: [], note: '', skip: [], outing: false,
     action: {
       type: 'sound', sound: 'builtin:doorbell',
       volume: state.settings.default_volume ?? 0.6, repeat: 1,
@@ -1569,6 +1570,8 @@ function fillEditor() {
   $('#f-text').value = draft.action.text || '';
   $('#f-rate').value = draft.action.rate || 180;
   setSwitch($('#f-lead-speak'), !!draft.lead_action.speak_remaining);
+  setSwitch($('#f-outing'), !!draft.outing);
+  $('#f-outing-block').hidden = !(state.weather && state.weather.installed);
   renderEditorValues();
 }
 
@@ -1798,6 +1801,7 @@ function collect() {
     kind, note: $('#f-note').value.trim(),
     lead_times: draft.lead_times,
     skip: kind === 'once' ? [] : draft.skip,
+    outing: !!draft.outing,
     action: {
       type,
       sound: a.sound,
@@ -2231,6 +2235,10 @@ function wire() {
     if (draft.lead_action.speak_remaining) previewLead();
   });
   $('#f-lead-test').addEventListener('click', previewLead);
+  $('#f-outing').addEventListener('click', () => {
+    draft.outing = !draft.outing;
+    setSwitch($('#f-outing'), draft.outing);
+  });
   $('#f-speak').addEventListener('click', () => {
     draft._speak = !draft._speak;
     renderSpeakPage();

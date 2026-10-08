@@ -128,12 +128,78 @@ class TestClothing(unittest.TestCase):
         self.assertEqual(weather.clothing({"feels_min": None}), "")
 
 
+class TestOuting(Base):
+    def test_sentence_for_a_departure_time(self):
+        leave = datetime.combine(TODAY, datetime.min.time()).replace(hour=8, minute=35)
+        text = self.w.outing(leave)
+        # 8〜14 時: 体感 10〜16 度、11・12 時に雨
+        self.assertTrue(text.startswith("外は少し涼しいです。体感温度は10度です。11時ごろから雨が降りそうです。"))
+        self.assertIn("ジャケットを着ていきましょう。", text)
+
+    def test_no_weather_means_nothing(self):
+        self.path.unlink()
+        self.assertEqual(self.w.outing(datetime.now()), "")
+
+    def test_words(self):
+        self.assertEqual(weather.feel_word(30), "暑いです")
+        self.assertEqual(weather.feel_word(16), "過ごしやすい気温です")
+        self.assertEqual(weather.feel_word(3), "寒いです")
+        self.assertEqual(weather.feel_word(-8), "とても寒いです")
+        self.assertEqual(weather.outing_sentence({"feels_morning": 20, "chance": 40, "snow": True, "wet": [],
+                                                  "clothing": "半袖か薄い長袖で大丈夫"}),
+                         "外は過ごしやすい気温です。体感温度は20度です。にわか雪があるかもしれません。半袖か薄い長袖で大丈夫。")
+
+
+class TestOutingInSchedules(unittest.TestCase):
+    class FakeWeather:
+        def __init__(self):
+            self.asked = []
+
+        def outing(self, at):
+            self.asked.append(at)
+            return "外は寒いです。"
+
+    def setUp(self):
+        from sounder import scheduler
+        self.w = self.FakeWeather()
+        self.sch = scheduler.Scheduler(None, None, None, weather=self.w)
+        self.sched = {"name": "学校", "outing": True, "lead_times": [10],
+                      "action": {"type": "both", "sound": "builtin:ding", "text": "学校の時間です。"},
+                      "lead_action": {"type": "sound", "sound": "builtin:ding", "speak_remaining": True}}
+        self.when = datetime(2026, 10, 8, 8, 25)
+
+    def test_main_appends_to_the_text(self):
+        a = self.sch.action_for(self.sched, "main", 0, {}, when=self.when)
+        self.assertEqual(a["text"], "学校の時間です。 外は寒いです。")
+        self.assertEqual(self.sched["action"]["text"], "学校の時間です。")   # 元の予定は変えない
+
+    def test_lead_uses_the_departure_time(self):
+        a = self.sch.action_for(self.sched, "lead", 10, {}, when=self.when)
+        self.assertEqual(a["text"], "学校まで、あと10分です。 外は寒いです。")
+        self.assertEqual(self.w.asked[-1], datetime(2026, 10, 8, 8, 35))
+
+    def test_sound_only_gets_speech(self):
+        self.sched["lead_action"]["speak_remaining"] = False
+        a = self.sch.action_for(self.sched, "lead", 10, {"default_voice": "Kyoko"}, when=self.when)
+        self.assertEqual((a["type"], a["text"], a["voice"]), ("both", "外は寒いです。", "Kyoko"))
+
+    def test_off_means_unchanged(self):
+        self.sched["outing"] = False
+        self.assertEqual(self.sch.action_for(self.sched, "main", 0, {}, when=self.when)["text"], "学校の時間です。")
+
+
 class TestSettings(unittest.TestCase):
     def test_validate_and_survive_restart(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"
             config.Store(path).update_settings({"weather": {"name": "Toronto", "lat": "43.65161", "lon": -79.38}})
             self.assertEqual(config.Store(path).settings["weather"], {"name": "Toronto", "lat": 43.6516, "lon": -79.38})
+
+    def test_outing_flag_on_schedules(self):
+        raw = {"name": "学校", "kind": "weekly", "time": "08:35", "days": [0],
+               "action": {"type": "sound", "sound": "builtin:ding"}}
+        self.assertFalse(config.validate_schedule(raw)["outing"])
+        self.assertTrue(config.validate_schedule({**raw, "outing": True})["outing"])
 
     def test_rejects_bad_values(self):
         cur = dict(config.DEFAULT_SETTINGS)

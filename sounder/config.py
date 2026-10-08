@@ -156,6 +156,9 @@ def validate_schedule(raw: Any, *, keep_id: str | None = None) -> dict[str, Any]
         s["anchor"] = _time(raw.get("anchor", start), "基準時刻")
         s["days"] = _days(raw.get("days"), required=False)
 
+    # お出かけ参考情報: 読み上げに、その時刻からの天気と服装を足す
+    s["outing"] = bool(raw.get("outing", False))
+
     # お休みの日（祝日・学校の休校日）は鳴らさない
     skip = raw.get("skip") or []
     if not isinstance(skip, list) or any(c not in daysoff.CALENDARS for c in skip):

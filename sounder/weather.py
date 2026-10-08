@@ -63,6 +63,38 @@ CLOTHING = [
 ]
 
 
+def feel_word(feels) -> str:
+    """体感温度 → 「寒いです」など。"""
+    if feels is None:
+        return ""
+    for limit, word in ((28, "暑いです"), (23, "暖かいです"), (15, "過ごしやすい気温です"),
+                        (10, "少し涼しいです"), (0, "寒いです")):
+        if feels >= limit:
+            return word
+    return "とても寒いです"
+
+
+def outing_sentence(info: dict) -> str:
+    """お出かけの読み上げに足す一言（天気と服装）。例:
+    「外は寒いです。体感温度は7度です。雨の心配はありません。寒いので厚手のジャケットを着ていきましょう。」"""
+    if not info:
+        return ""
+    feels = info.get("feels_morning")
+    parts = []
+    if feels is not None:
+        parts.append(f"外は{feel_word(feels)}。体感温度は{round(feels)}度です。")
+    kind = "雪" if info.get("snow") else "雨"
+    if info.get("wet"):
+        parts.append(f"{info['wet'][0]}時ごろから{kind}が降りそうです。")
+    elif info.get("chance", 0) >= 30:
+        parts.append(f"にわか{kind}があるかもしれません。")
+    else:
+        parts.append("雨の心配はありません。")
+    if info.get("clothing"):
+        parts.append(info["clothing"] + "。")
+    return "".join(parts)
+
+
 def clothing(info: dict) -> str:
     """服装の目安（決まった規則で決める。AI には言い回しだけ任せる）。"""
     low = info.get("feels_min")
@@ -195,6 +227,11 @@ class Weather:
         if info["windy"]:
             lines.append("風が強い")
         return {**info, "lines": lines, "clothing": clothing(info)}
+
+    def outing(self, at: datetime, hours: int = 6) -> str:
+        """at に出かけるときの一言（その時刻から hours 時間の天気と服装）。天気が分からなければ ""。"""
+        return outing_sentence(self.today(at.date(), start_hour=at.hour,
+                                          end_hour=min(24, at.hour + hours)))
 
     def today_lines(self, day: date) -> list[str]:
         return self.today(day).get("lines") or []
