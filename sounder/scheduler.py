@@ -313,6 +313,7 @@ class Scheduler:
         self._prefetched: set[str] = set()
         self._next_prefetch = datetime.min
         self._next_idle_check = datetime.min
+        self._cleaned_on: date | None = None     # 過ぎた 1 回だけの予定を最後に片付けた日
 
     def start(self) -> None:
         self._last_tick = datetime.now()
@@ -360,10 +361,27 @@ class Scheduler:
         if now >= self._next_prefetch:
             self._next_prefetch = now + timedelta(seconds=PREFETCH_EVERY)
             self._prefetch(now, settings)
+        if self._cleaned_on != now.date():
+            self._cleaned_on = now.date()
+            self.clean_past_once(now.date())
         sleep_idle = getattr(self.player, "sleep_idle_engines", None)
         if sleep_idle and now >= self._next_idle_check:
             self._next_idle_check = now + timedelta(seconds=IDLE_CHECK_EVERY)
             sleep_idle(60.0 * settings.get("tts_idle_minutes", 30))
+
+    def clean_past_once(self, today: date) -> list[str]:
+        """日付が昨日以前の「1回だけ」の予定を消す（1 日 1 回）。今日の分はタイムラインで結果を見られるよう残す。"""
+        removed = []
+        for s in self.store.schedules():
+            if s.get("kind") != "once" or (s.get("date") or "9999") >= today.isoformat():
+                continue
+            try:
+                self.store.delete(s["id"])
+            except KeyError:
+                continue
+            removed.append(s["name"])
+            self.log("info", f"過ぎた1回だけの予定「{s['name']}」（{s['date']}）を削除しました")
+        return removed
 
     def _prefetch(self, now: datetime, settings: dict) -> None:
         """もうすぐ鳴る予定の読み上げを、再生層に先に作らせる。"""

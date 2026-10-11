@@ -222,3 +222,23 @@ class TestLeadActionFallback(Base):
         self.sched.tick(t + timedelta(seconds=1))
         _label, action = self.player.played[0]
         self.assertEqual(action["sound"], "builtin:melody_notice")
+
+
+class TestCleanPastOnce(Base):
+    def test_removes_once_schedules_before_today_once_a_day(self):
+        old = self.add(name="去年の健診", kind="once", date="2026-09-20", time="10:00")
+        today = self.add(name="今日の歯医者", kind="once", date="2026-09-21", time="08:00")
+        later = self.add(name="来週の遠足", kind="once", date="2026-09-28", time="08:20")
+        weekly = self.add(name="毎日")
+        t = datetime(2026, 9, 21, 0, 0, 5)
+        self.sched._last_tick = t
+        self.sched.tick(t)
+        ids = [s["id"] for s in self.store.schedules()]
+        self.assertNotIn(old["id"], ids)
+        self.assertEqual(sorted(ids), sorted([today["id"], later["id"], weekly["id"]]))
+        self.assertTrue(any("去年の健診" in m for _lv, m in self.msgs))
+        # 同じ日のうちは見に行かない。翌日になると「今日の歯医者」も片付く
+        self.sched.tick(t + timedelta(hours=1))
+        self.assertEqual(len(self.store.schedules()), 3)
+        self.sched.tick(datetime(2026, 9, 22, 0, 0, 1))
+        self.assertNotIn(today["id"], [s["id"] for s in self.store.schedules()])
