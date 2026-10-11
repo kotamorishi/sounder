@@ -222,12 +222,27 @@
           <button type="button" class="switch" id="ai-enabled" role="switch" aria-checked="false" aria-labelledby="ai-on-label"></button>
         </div>
         <label class="cell" data-ai-only>
+          <span class="cell-label">使う AI</span>
+          <select class="cell-input cell-select" id="ai-provider">
+            <option value="openai">手元の AI（OpenAI 互換）</option>
+            <option value="anthropic">Claude API</option>
+          </select>
+        </label>
+        <label class="cell" data-ai-only data-provider="openai">
           <span class="cell-label">サーバ</span>
           <input type="url" class="cell-input cell-text" id="ai-url" placeholder="http://spark-1:8000/v1" autocomplete="off" spellcheck="false">
         </label>
-        <label class="cell" data-ai-only>
+        <label class="cell" data-ai-only data-provider="openai">
           <span class="cell-label">モデル</span>
           <input type="text" class="cell-input cell-text" id="ai-model" placeholder="自動（最初のモデル）" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="cell" data-ai-only data-provider="anthropic">
+          <span class="cell-label">API キー</span>
+          <input type="password" class="cell-input cell-text" id="ai-claude-key" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="cell" data-ai-only data-provider="anthropic">
+          <span class="cell-label">モデル</span>
+          <input type="text" class="cell-input cell-text" id="ai-claude-model" placeholder="claude-opus-5" autocomplete="off" spellcheck="false">
         </label>
         <button type="button" class="cell cell-button" id="ai-check" data-ai-only>接続を確かめる</button>
       </div>

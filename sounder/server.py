@@ -45,6 +45,11 @@ PUBLIC_FILES = {"/icon-180.png", "/icon-192.png", "/icon-512.png", "/icon-maskab
                 "/favicon.png", "/manifest.webmanifest", "/sw.js"}
 
 
+def public_settings(settings: dict) -> dict:
+    """画面に返す設定。AI の API キーは中身を出さない（入っているかどうかだけ）。"""
+    return {**settings, "ai": ai_mod.public(ai_mod.settings_of(settings))}
+
+
 class App:
     """サーバ全体で共有する状態のまとめ。"""
 
@@ -350,7 +355,7 @@ class Handler(BaseHTTPRequestHandler):
             settings = app.store.update_settings(body)
             if "weather" in body and app.weather.installed():
                 app.weather.refresh()   # 地点を変えたら、すぐに天気を取り直す
-            self._json({"settings": settings})
+            self._json({"settings": public_settings(settings)})
             return
 
         if parts == ["weather", "locate"] and method == "POST":
@@ -517,7 +522,7 @@ class Handler(BaseHTTPRequestHandler):
         app = self.app
         return {
             "now": datetime.now().isoformat(timespec="seconds"),
-            "settings": app.store.settings,
+            "settings": public_settings(app.store.settings),
             "schedules": self._decorate(app.store.schedules()),
             "sounds": app.player.library(),
             "voices": app.player.voices(),

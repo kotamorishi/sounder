@@ -181,6 +181,10 @@ curl -s http://<AIサーバ>:<ポート>/v1/models      # 確認: data[].id に�
 朝のお知らせの時刻・曜日を選ぶ。「今日のお知らせを作って鳴らす」で試せる。
 API: `POST /api/ai/check`、`POST /api/ai/briefing {"play":true}`。AI が答えないときは決まった文で読む。
 
+Claude API を使う場合は「使う AI」を Claude API にして API キーを入れる（モデルの既定は `claude-opus-5`、
+`fallbacks: "default"` と effort `low` で呼ぶ。標準ライブラリの urllib で直接呼び、python.org 版 Python のために
+`/etc/ssl/cert.pem` で証明書を確かめる）。API キーは `data/config.json` にだけ保存し、`/api/state` などには返さない。
+
 ## 8. 運用
 
 ```sh

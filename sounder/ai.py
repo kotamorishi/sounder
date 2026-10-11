@@ -1,4 +1,7 @@
-"""AI との連携（オプション）。OpenAI 互換の API（vLLM・Ollama・LM Studio など）に文を作らせる。
+"""AI との連携（オプション）。文を作らせる相手は 2 通り:
+  - provider="openai"    … 手元の OpenAI 互換の API（vLLM・Ollama・LM Studio など）
+  - provider="anthropic" … Claude API（https://api.anthropic.com、API キーが要る）
+sounder は標準ライブラリだけで動かすので、どちらも urllib で直接呼ぶ（SDK は入れない）。
 
 いまできること:
   - 朝のお知らせ（briefing）… 決まった時刻に、今日のカレンダーの予定と祝日・休校日をまとめて読み上げる
@@ -12,9 +15,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import ssl
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
@@ -23,15 +29,38 @@ from .calendarfeed import settings_of as calendar_settings
 
 DEFAULTS = {
     "enabled": False,
+    "provider": "openai",              # "openai"（手元の OpenAI 互換の API）か "anthropic"（Claude API）
     "url": "http://spark-1:8000/v1",   # OpenAI 互換の API の入り口（/chat/completions の手前まで）
     "model": "",                       # "" なら /models の最初のもの
     "api_key": "",
+    "claude_api_key": "",              # Claude API の API キー（画面やログには出さない）
+    "claude_model": "",                # "" なら CLAUDE_MODEL
     "briefing": {"enabled": False, "time": "07:30", "days": [0, 1, 2, 3, 4, 5, 6],
                  # 休みの日（土日とオンタリオ州の祝日）の時刻。"" ならいつもと同じ
                  "holiday_time": "",
                  "sound": "builtin:melody_morning", "voice": ""},
 }
 WEEKDAYS = "月火水木金土日"
+CLAUDE_URL = "https://api.anthropic.com/v1"
+CLAUDE_MODEL = "claude-opus-5"
+# Claude が安全のために断ったときは、API 側で別のモデルに回してもらう（fallbacks: "default"）
+CLAUDE_BETA = "server-side-fallback-2026-07-01"
+KEY_FIELDS = ("api_key", "claude_api_key")
+
+
+def ssl_context() -> ssl.SSLContext:
+    """python.org 版の Python は証明書を持っていないことがあるので、macOS の証明書の束を使う。"""
+    if os.path.exists("/etc/ssl/cert.pem"):
+        return ssl.create_default_context(cafile="/etc/ssl/cert.pem")
+    return ssl.create_default_context()
+
+
+def public(cfg: dict) -> dict:
+    """画面に返す AI の設定。API キーは中身を出さず、入っているかどうかだけ。"""
+    out = {k: v for k, v in cfg.items() if k not in KEY_FIELDS}
+    for k in KEY_FIELDS:
+        out[f"{k}_set"] = bool(cfg.get(k))
+    return out
 PREPARE_AHEAD = 10 * 60      # 何秒前からお知らせの文を作り始めるか
 TIMEOUT = 60
 
@@ -71,13 +100,30 @@ class AI:
     # --- AI サーバ ---------------------------------------------------------
 
     def _request(self, cfg: dict, path: str, body: dict | None = None, timeout: float = TIMEOUT):
-        headers = {"Content-Type": "application/json"}
-        if cfg.get("api_key"):
-            headers["Authorization"] = f"Bearer {cfg['api_key']}"
-        req = urllib.request.Request(cfg["url"].rstrip("/") + path, headers=headers,
+        if cfg.get("provider") == "anthropic":
+            if not cfg.get("claude_api_key"):
+                raise ValueError("Claude API の API キーが入っていません")
+            base = CLAUDE_URL
+            headers = {"Content-Type": "application/json", "x-api-key": cfg["claude_api_key"],
+                       "anthropic-version": "2023-06-01", "anthropic-beta": CLAUDE_BETA}
+        else:
+            base = cfg["url"]
+            headers = {"Content-Type": "application/json"}
+            if cfg.get("api_key"):
+                headers["Authorization"] = f"Bearer {cfg['api_key']}"
+        req = urllib.request.Request(base.rstrip("/") + path, headers=headers,
                                      data=json.dumps(body).encode() if body is not None else None)
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.load(r)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout, context=ssl_context()) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as exc:
+            # Claude API のエラーは {"error": {"type", "message"}}。キーが違う（401）なども分かるように
+            try:
+                err = json.load(exc).get("error") or {}
+                detail = err.get("message") or err.get("type") or ""
+            except (ValueError, AttributeError):
+                detail = ""
+            raise ValueError(f"HTTP {exc.code} {detail}".strip()) from None
 
     def models(self, cfg: dict) -> list[str]:
         return [m.get("id") for m in self._request(cfg, "/models", timeout=10).get("data") or []]
@@ -85,6 +131,13 @@ class AI:
     def check(self, settings: dict) -> dict:
         """接続テスト（設定画面のボタン）。"""
         cfg = settings_of(settings)
+        if cfg.get("provider") == "anthropic":
+            model = cfg.get("claude_model") or CLAUDE_MODEL
+            try:
+                self._request(cfg, f"/models/{urllib.parse.quote(model)}", timeout=15)
+            except (OSError, ValueError) as exc:
+                return {"ok": False, "error": f"Claude API に接続できません（{exc}）"}
+            return {"ok": True, "models": [model], "model": model}
         try:
             models = self.models(cfg)
         except (OSError, ValueError) as exc:
@@ -94,12 +147,31 @@ class AI:
 
     def complete(self, settings: dict, prompt: str, *, max_tokens: int = 500) -> str:
         cfg = settings_of(settings)
+        if cfg.get("provider") == "anthropic":
+            return self._complete_claude(cfg, prompt)
         model = cfg["model"] or self.models(cfg)[0]
         d = self._request(cfg, "/chat/completions", {
             "model": model, "temperature": 0.3, "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         })
         return (d["choices"][0]["message"]["content"] or "").strip()
+
+    def _complete_claude(self, cfg: dict, prompt: str) -> str:
+        """Claude API（Messages API）。短い文を作るだけなので effort は low。"""
+        d = self._request(cfg, "/messages", {
+            "model": cfg.get("claude_model") or CLAUDE_MODEL,
+            "max_tokens": 16000,
+            "fallbacks": "default",
+            "output_config": {"effort": "low"},
+            "messages": [{"role": "user", "content": prompt}],
+        })
+        # 断られたとき（stop_reason が refusal）は本文を読まない。呼び出し側が決まった文に切り替える
+        if d.get("stop_reason") == "refusal":
+            raise ValueError("Claude がこの依頼を断りました")
+        text = "".join(b.get("text", "") for b in d.get("content") or [] if b.get("type") == "text")
+        if not text.strip():
+            raise ValueError(f"Claude から文が返ってきませんでした（{d.get('stop_reason')}）")
+        return text.strip()
 
     # --- 朝のお知らせ ------------------------------------------------------
 

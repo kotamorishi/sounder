@@ -233,3 +233,107 @@ class TestSettings(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeClaude(BaseHTTPRequestHandler):
+    """Claude API（Messages API）のダミー。"""
+    requests: list = []
+    reply: dict = {}
+    status = 200
+
+    def log_message(self, *a):
+        pass
+
+    def _send(self, code, obj):
+        body = json.dumps(obj, ensure_ascii=False).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        FakeClaude.requests.append(("GET", self.path, {k.lower(): v for k, v in self.headers.items()}, None))
+        if FakeClaude.status != 200:
+            self._send(FakeClaude.status, {"type": "error", "error": {"type": "authentication_error",
+                                                                      "message": "invalid x-api-key"}})
+        else:
+            self._send(200, {"id": "claude-opus-5", "type": "model"})
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        FakeClaude.requests.append(("POST", self.path, {k.lower(): v for k, v in self.headers.items()}, body))
+        self._send(FakeClaude.status, FakeClaude.reply)
+
+
+class TestClaude(Base):
+    def setUp(self):
+        super().setUp()
+        FakeClaude.requests = []
+        FakeClaude.status = 200
+        FakeClaude.reply = {"stop_reason": "end_turn", "content": [
+            {"type": "thinking", "thinking": ""},
+            {"type": "text", "text": "おはようございます。"}, {"type": "text", "text": "今日は晴れです。"}]}
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeClaude)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        old = ai.CLAUDE_URL
+        ai.CLAUDE_URL = f"http://127.0.0.1:{srv.server_address[1]}/v1"
+        self.addCleanup(setattr, ai, "CLAUDE_URL", old)
+        self.settings["ai"].update(provider="anthropic", claude_api_key="sk-ant-test", claude_model="")
+
+    def test_request_shape(self):
+        self.assertEqual(self.ai.briefing_text(self.settings, TODAY, wait=True),
+                         "おはようございます。今日は晴れです。")
+        method, path, headers, body = FakeClaude.requests[-1]
+        self.assertEqual((method, path), ("POST", "/v1/messages"))
+        self.assertEqual(headers["x-api-key"], "sk-ant-test")
+        self.assertEqual(headers["anthropic-version"], "2023-06-01")
+        self.assertEqual(headers["anthropic-beta"], "server-side-fallback-2026-07-01")
+        self.assertEqual(body["model"], "claude-opus-5")
+        self.assertEqual(body["fallbacks"], "default")
+        self.assertEqual(body["output_config"], {"effort": "low"})
+        self.assertNotIn("temperature", body)
+        self.assertIn("Tandem lesson", body["messages"][0]["content"])
+
+    def test_refusal_falls_back_to_the_fixed_sentence(self):
+        FakeClaude.reply = {"stop_reason": "refusal", "content": [], "stop_details": None}
+        text = self.ai.briefing_text(self.settings, TODAY, wait=True)
+        self.assertIn("14時から、Tandem lesson。", text)
+        self.assertIn("断りました", self.logs[-1][1])
+
+    def test_without_a_key(self):
+        self.settings["ai"]["claude_api_key"] = ""
+        self.assertIn("おはようございます", self.ai.briefing_text(self.settings, TODAY, wait=True))
+        self.assertEqual(FakeClaude.requests, [])
+        self.assertFalse(self.ai.check(self.settings)["ok"])
+
+    def test_check_uses_the_models_endpoint_and_shows_api_errors(self):
+        r = self.ai.check(self.settings)
+        self.assertEqual((r["ok"], r["model"]), (True, "claude-opus-5"))
+        self.assertEqual(FakeClaude.requests[-1][1], "/v1/models/claude-opus-5")
+        FakeClaude.status = 401
+        r = self.ai.check(self.settings)
+        self.assertFalse(r["ok"])
+        self.assertIn("HTTP 401 invalid x-api-key", r["error"])
+
+    def test_keys_are_never_returned(self):
+        pub = ai.public(ai.settings_of(self.settings))
+        self.assertNotIn("claude_api_key", pub)
+        self.assertNotIn("api_key", pub)
+        self.assertTrue(pub["claude_api_key_set"])
+        self.assertFalse(pub["api_key_set"])
+
+
+class TestKeySettings(unittest.TestCase):
+    def test_omitted_key_is_kept_and_empty_clears(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            config.Store(path).update_settings({"ai": {"provider": "anthropic", "claude_api_key": "sk-ant-1"}})
+            config.Store(path).update_settings({"ai": {"enabled": True}})       # キーを送らない
+            self.assertEqual(config.Store(path).settings["ai"]["claude_api_key"], "sk-ant-1")
+            config.Store(path).update_settings({"ai": {"claude_api_key": ""}})
+            self.assertEqual(config.Store(path).settings["ai"]["claude_api_key"], "")
+            with self.assertRaises(config.ValidationError):
+                config.validate_settings({"ai": {"provider": "gpt"}}, config.Store(path).settings)

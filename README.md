@@ -38,7 +38,7 @@ git clone https://github.com/kotamorishi/sounder.git && cd sounder
 | カレンダー連携 | Mac のカレンダー（iCloud の共有カレンダーも）の予定を N 分前に読み上げ | Xcode か Command Line Tools |
 | 効果音 | 効果音ラボの約 1,400 種を各自の Mac に取り込み | ネット接続（取り込み時のみ） |
 | 天気 | 朝のお知らせに今日の天気（WeatherKit）。雨の時間帯なら傘をすすめる | Apple Developer Program・Xcode |
-| AI（オプション） | 朝に今日の予定をまとめて読み上げ（祝日・休校日にも触れる）。OpenAI 互換の API（vLLM・Ollama など）を使う | 手元の AI サーバ |
+| AI（オプション） | 朝に今日の予定をまとめて読み上げ（祝日・休校日にも触れる）。手元の OpenAI 互換の API（vLLM・Ollama など）か Claude API | 手元の AI サーバか Claude API キー |
 | スマホ・外出先 | Tailscale の HTTPS で PWA として使う | Tailscale |
 
 鳴らしすぎない工夫もあります：禁止時間、全体オフ、スリープ復帰などで 2 分以上遅れた予定は鳴らさない、停止ボタン。
@@ -58,7 +58,8 @@ git clone https://github.com/kotamorishi/sounder.git && cd sounder
 
 - 予定・設定・ログ・読み上げのキャッシュ・カレンダーの写しは、すべて `data/`（git の対象外）に置かれます。
   バックアップは `data/config.json` だけで足ります。
-- 通信するのは、あなたが追加した機能の初回ダウンロード（モデル・効果音）だけです。予定の中身は外に出ません。
+- 通信するのは、あなたが追加した機能の初回ダウンロード（モデル・効果音）と、天気（Apple Weather）だけです。
+  AI 連携で **Claude API** を選んだときだけ、朝のお知らせの材料（予定名・時刻・場所・天気）を Anthropic に送ります。
 - 既定の待ち受けは `127.0.0.1` のみ。LAN やスマホに出すときは合言葉（トークン）を付けます。
   家の外から使うなら、LAN に直接公開するより Tailscale（tailnet 内だけの HTTPS）を勧めます。
 

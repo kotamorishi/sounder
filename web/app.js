@@ -726,7 +726,12 @@ function renderAbout() {
     ['サーバ起動', state.started_at ? state.started_at.replace('T', ' ').slice(0, 16) : '—'],
     ['内蔵サウンド', `${state.sounds.builtin.length} 種類`],
     ['読み上げの声', `${state.voices.length} 種類`],
-    ['通信', 'この Mac の中だけ'],
+    ['通信', (() => {
+      const a = state.settings.ai || {};
+      if (a.enabled && a.provider === 'anthropic') return 'Claude API（インターネット）も使う';
+      if (a.enabled) return 'この Mac と AI サーバ';
+      return 'この Mac の中だけ';
+    })()],
   ];
   for (const [k, v] of rows) {
     const c = el('div', 'cell');
@@ -1297,26 +1302,38 @@ let aiLastText = '';
 
 function aiSettings() {
   const a = state.settings.ai || {};
-  return Object.assign({ enabled: false, url: 'http://spark-1:8000/v1', model: '', api_key: '' }, a,
+  // API キーは画面に返ってこない（*_set で入っているかだけ分かる）。保存のときも送らない＝そのまま
+  return Object.assign({ enabled: false, provider: 'openai', url: 'http://spark-1:8000/v1', model: '', claude_model: '' }, a,
     { briefing: Object.assign({ enabled: false, time: '07:30', days: [0, 1, 2, 3, 4, 5, 6], sound: 'builtin:melody_morning', voice: '' }, a.briefing || {}) });
 }
 
 function saveAI(patch, msg) {
   const cur = aiSettings();
   const next = Object.assign(cur, patch, { briefing: Object.assign(cur.briefing, patch.briefing || {}) });
+  delete next.api_key_set;
+  delete next.claude_api_key_set;
   return saveSettings({ ai: next }, msg);
 }
 
 function renderAISettings() {
   const a = aiSettings();
   setSwitch($('#ai-enabled'), !!a.enabled);
-  $$('#ai-block [data-ai-only]').forEach((n) => { n.hidden = !a.enabled; });
+  const claude = a.provider === 'anthropic';
+  $$('#ai-block [data-ai-only]').forEach((n) => {
+    n.hidden = !a.enabled || (n.dataset.provider && n.dataset.provider !== a.provider);
+  });
+  $('#ai-provider').value = a.provider || 'openai';
   if (document.activeElement !== $('#ai-url')) $('#ai-url').value = a.url || '';
   if (document.activeElement !== $('#ai-model')) $('#ai-model').value = a.model || '';
-  $('#ai-desc').textContent = a.enabled
-    ? `予定の中身（カレンダーの予定名・時刻・場所、祝日・休校日）を、このサーバの AI に送って文を作らせます。`
-      + `OpenAI 互換の API（vLLM・Ollama・LM Studio など）が使えます。AI が答えないときは決まった文で読み上げます。`
-    : '同じネットワークや Tailscale の AI サーバ（OpenAI 互換の API）を使って、今日の予定をまとめて朝に読み上げたりできます。';
+  if (document.activeElement !== $('#ai-claude-model')) $('#ai-claude-model').value = a.claude_model || '';
+  $('#ai-claude-key').placeholder = a.claude_api_key_set ? '設定済み（変えるときだけ入力）' : 'sk-ant-…';
+  $('#ai-desc').textContent = !a.enabled
+    ? '同じネットワークや Tailscale の AI サーバ（OpenAI 互換の API）、または Claude API を使って、今日の予定をまとめて朝に読み上げたりできます。'
+    : claude
+      ? '予定の中身（カレンダーの予定名・時刻・場所、天気、祝日・休校日）を Anthropic の Claude API に送って文を作らせます（インターネット経由・API の利用料がかかります）。'
+        + 'API キーは Mac mini の中にだけ保存し、画面には表示しません。AI が答えないときは決まった文で読み上げます。'
+      : '予定の中身（カレンダーの予定名・時刻・場所、祝日・休校日）を、このサーバの AI に送って文を作らせます。'
+        + 'OpenAI 互換の API（vLLM・Ollama・LM Studio など）が使えます。AI が答えないときは決まった文で読み上げます。';
   const b = a.briefing;
   setSwitch($('#ai-brief'), !!b.enabled);
   if (document.activeElement !== $('#ai-brief-time')) $('#ai-brief-time').value = b.time;
@@ -2083,6 +2100,14 @@ function wire() {
   });
   $('#ai-url').addEventListener('change', (e) => saveAI({ url: e.target.value.trim() }, '保存しました'));
   $('#ai-model').addEventListener('change', (e) => saveAI({ model: e.target.value.trim() }, '保存しました'));
+  $('#ai-provider').addEventListener('change', (e) => saveAI({ provider: e.target.value }, '保存しました'));
+  $('#ai-claude-model').addEventListener('change', (e) => saveAI({ claude_model: e.target.value.trim() }, '保存しました'));
+  $('#ai-claude-key').addEventListener('change', async (e) => {
+    const key = e.target.value.trim();
+    if (!key) return;
+    await saveAI({ claude_api_key: key }, 'API キーを保存しました');
+    e.target.value = '';
+  });
   $('#ai-check').addEventListener('click', async () => {
     const btn = $('#ai-check');
     btn.disabled = true;

@@ -332,6 +332,13 @@ class TestSchedules(ServerCase):
         self.err("POST", "/api/speak", {"text": "あ" * 501})
         self.err("GET", "/api/jobs/nope", expect=404)
 
+    def test_ai_keys_are_not_sent_to_the_browser(self):
+        r = self.ok("PATCH", "/api/settings", {"ai": {"provider": "anthropic", "claude_api_key": "sk-ant-secret"}})
+        self.assertNotIn("sk-ant-secret", json.dumps(r))
+        self.assertTrue(r["settings"]["ai"]["claude_api_key_set"])
+        state = self.ok("GET", "/api/state")
+        self.assertNotIn("sk-ant-secret", json.dumps(state))
+
     def test_test_falls_back_to_main_without_lead(self):
         sid = self.ok("POST", "/api/schedules",
                       self.sample(lead_times=[]))["schedule"]["id"]

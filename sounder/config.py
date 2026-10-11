@@ -248,11 +248,19 @@ def validate_settings(raw: Any, current: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(b, dict):
             raise ValidationError("朝のお知らせの設定が不正です")
         cb = cur["briefing"]
+        provider = a.get("provider", cur.get("provider", "openai"))
+        if provider not in ("openai", "anthropic"):
+            raise ValidationError("AI の種類が不正です")
         out["ai"] = {
             "enabled": bool(a.get("enabled", cur["enabled"])),
+            "provider": provider,
             "url": url,
             "model": (a.get("model", cur["model"]) or "").strip()[:200],
-            "api_key": (a.get("api_key", cur["api_key"]) or "").strip()[:300],
+            # API キーは送られてきたときだけ書き換える（画面には中身を返さないので、省略 = そのまま）
+            "api_key": (a["api_key"] if "api_key" in a else cur["api_key"] or "").strip()[:300],
+            "claude_api_key": (a["claude_api_key"] if "claude_api_key" in a
+                               else cur.get("claude_api_key") or "").strip()[:300],
+            "claude_model": (a.get("claude_model", cur.get("claude_model")) or "").strip()[:100],
             "briefing": {
                 "enabled": bool(b.get("enabled", cb["enabled"])),
                 "time": _time(b.get("time", cb["time"]), "朝のお知らせの時刻"),
