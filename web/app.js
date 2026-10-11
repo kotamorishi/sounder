@@ -615,6 +615,7 @@ function renderSettings() {
   renderDesigned();
   renderCalendarSettings();
   renderAISettings();
+  renderClaudeSettings();
   renderWeatherSettings();
   const neural = state.voices.filter((v) => 'asleep' in v);
   $('#tts-idle-block').hidden = !neural.length;
@@ -1294,6 +1295,113 @@ async function findWeatherPlace() {
   } catch (e) { fail(e); } finally { btn.disabled = false; }
 }
 
+// --- Claude API を使う機能
+function claudeReady() {
+  const a = state.settings.ai || {};
+  return !!(a.enabled && a.provider === 'anthropic' && a.claude_api_key_set);
+}
+
+function renderClaudeSettings() {
+  const c = Object.assign({ enabled: false, time: '06:30' }, (state.settings.ai || {}).closure || {});
+  setSwitch($('#ai-closure'), !!c.enabled);
+  if (document.activeElement !== $('#ai-closure-time')) $('#ai-closure-time').value = c.time;
+  const t = state.closure_today;
+  let msg = '11月〜4月の授業日の朝、Claude が TDSB の公式サイトとトロントのニュースをウェブ検索して、大雪などの臨時休校を確かめます。'
+    + '休校なら朝のお知らせで伝え、学校の休みの予定（お休みの日に TDSB を選んだもの）は鳴らしません。1 回数円〜十数円かかります。';
+  if (t) {
+    msg += t.error ? ` 今日：確かめられませんでした（${t.error}）。`
+      : t.closed && t.confidence === 'high' ? ` 今日：臨時休校です（${t.reason}）。`
+        : t.closed ? ' 今日：休校かもしれない情報がありましたが、はっきりしないので普段どおりにします。'
+          : ' 今日：臨時休校はありません。';
+  }
+  $('#ai-closure-desc').textContent = msg;
+}
+
+let noticeEvents = [];
+const NOTICE_KINDS = { event: '行事', no_school: '学校が休み', early_dismissal: '早帰り', deadline: '締め切り', other: 'その他' };
+
+async function readNotice(file) {
+  if (!file) return;
+  if (file.size > 25 * 1024 * 1024) { toast('25MB までのファイルにしてください', true); return; }
+  const btn = $('#notice-pick');
+  btn.disabled = true;
+  btn.textContent = 'Claude が読んでいます…（30 秒ほど）';
+  try {
+    const data = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
+      fr.onerror = () => reject(new Error('ファイルを読めませんでした'));
+      fr.readAsDataURL(file);
+    });
+    const r = await api('POST', '/api/ai/notice', { filename: file.name, data });
+    noticeEvents = r.events.map((e) => Object.assign({ pick: e.kind !== 'other', remind_time: e.time || '07:30' }, e));
+    renderNotice();
+    toast(r.events.length ? `${r.events.length} 件見つかりました` : '日付のある行事が見つかりませんでした', !r.events.length);
+  } catch (e) { fail(e); } finally {
+    btn.disabled = false;
+    btn.textContent = 'お知らせ（PDF・写真）を選ぶ';
+    $('#notice-file').value = '';
+  }
+}
+
+function renderNotice() {
+  const box = $('#notice-results');
+  box.textContent = '';
+  for (const e of noticeEvents) {
+    const row = el('div', 'cell notice-row');
+    const check = el('button', 'notice-check');
+    check.type = 'button';
+    check.setAttribute('role', 'checkbox');
+    check.setAttribute('aria-checked', e.pick ? 'true' : 'false');
+    check.append(icon('check', 16));
+    check.addEventListener('click', () => { e.pick = !e.pick; renderNotice(); });
+    const label = el('span', 'cell-label');
+    label.append(el('span', null, e.title),
+      el('span', 'cell-sub', `${SL.onceLabel(e.date)} ${e.time || ''} · ${NOTICE_KINDS[e.kind] || e.kind}${e.note ? ' · ' + e.note : ''}`));
+    row.append(check, label);
+    if (e.kind !== 'no_school') {
+      const t = el('input', 'cell-input');
+      t.type = 'time';
+      t.value = e.remind_time;
+      t.setAttribute('aria-label', `${e.title} を知らせる時刻`);
+      t.addEventListener('change', () => { e.remind_time = t.value; });
+      row.append(t);
+    }
+    box.append(row);
+  }
+  $('#notice-apply').hidden = !noticeEvents.length;
+}
+
+async function applyNotice() {
+  const items = noticeEvents.filter((e) => e.pick);
+  if (!items.length) { toast('追加するものを選んでください', true); return; }
+  try {
+    const r = await api('POST', '/api/ai/notice/apply', { items });
+    noticeEvents = [];
+    renderNotice();
+    toast(`${r.added.length} 件追加しました`);
+    await refresh();
+  } catch (e) { fail(e); }
+}
+
+async function draftFromWords() {
+  const text = $('#nl-text').value.trim();
+  if (!text) { toast('どんな予定か入れてください', true); return; }
+  const btn = $('#nl-go');
+  btn.disabled = true;
+  btn.textContent = 'Claude が考えています…';
+  try {
+    const r = await api('POST', '/api/ai/schedule', { text });
+    // 下書きを編集画面に入れる（まだ保存しない）
+    openEditor(r.draft, { asNew: true, fromWords: true });
+    $('#nl-text').value = text;
+    toast('下書きを作りました。確かめてから保存してください');
+  } catch (e) { fail(e); } finally {
+    btn.disabled = false;
+    btn.textContent = 'この内容で下書きを作る';
+  }
+}
+
 // --- AI 連携（オプション）
 const AI_DAYS = [
   { value: '0,1,2,3,4,5,6', label: '毎日' }, { value: '0,1,2,3,4', label: '平日' }, { value: '5,6', label: '週末' },
@@ -1550,6 +1658,7 @@ function openEditor(sched, opts = {}) {
   $('#editor-title').textContent = editing ? '予定を編集' : '予定を追加';
   $('#editor-error').hidden = true;
   $('#preset-strip').hidden = !(opts.presets || !sched);
+  $('#nl-block').hidden = !(claudeReady() && (opts.presets || !sched || opts.fromWords));
   $('#editor-danger').hidden = !editing;
 
   const hist = [];
@@ -2178,6 +2287,33 @@ function wire() {
   $('#quiet-start').addEventListener('change', saveQuiet);
   $('#quiet-end').addEventListener('change', saveQuiet);
   $('#d-make').addEventListener('click', makeVoice);
+  $('#nl-go').addEventListener('click', draftFromWords);
+  $('#ai-closure').addEventListener('click', () => {
+    const on = !isOn($('#ai-closure'));
+    setSwitch($('#ai-closure'), on);
+    saveAI({ closure: Object.assign({}, (state.settings.ai || {}).closure, { enabled: on }) },
+      on ? '臨時休校の確認をオンにしました' : '臨時休校の確認をオフにしました');
+  });
+  $('#ai-closure-time').addEventListener('change', (e) => {
+    if (e.target.value) saveAI({ closure: Object.assign({}, (state.settings.ai || {}).closure, { time: e.target.value }) }, '保存しました');
+  });
+  $('#ai-closure-now').addEventListener('click', async () => {
+    const btn = $('#ai-closure-now');
+    btn.disabled = true;
+    btn.textContent = 'Claude が調べています…（1〜2 分）';
+    try {
+      const r = await api('POST', '/api/ai/closure', {});
+      state.closure_today = r.closure;
+      renderClaudeSettings();
+      toast(r.closure.closed && r.closure.confidence === 'high' ? `臨時休校です（${r.closure.reason}）` : '臨時休校はありません');
+    } catch (e) { fail(e); } finally {
+      btn.disabled = false;
+      btn.textContent = '今日の休校を今すぐ確かめる';
+    }
+  });
+  $('#notice-pick').addEventListener('click', () => $('#notice-file').click());
+  $('#notice-file').addEventListener('change', (e) => readNotice(e.target.files[0]));
+  $('#notice-apply').addEventListener('click', applyNotice);
   $('#sp-go').addEventListener('click', () => speakNow());
   $('#set-voice-btn').addEventListener('click', () => {
     renderVoiceList($('#set-voice-list'), state.settings.default_voice, (v) => { saveSettings({ default_voice: v }, '声を保存しました'); previewSpeech({ voice: v, rate: Number($('#set-rate').value), volume: Number($('#set-volume').value) }); });

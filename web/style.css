@@ -1159,7 +1159,7 @@ details.fold:not([open]) { margin-bottom: 4px; }
 .search-empty { text-align: center; padding: 16px 0; }
 
 /* カレンダー連携: 見出しと上の組のあいだ */
-#cal-list-head, #ai-brief-head { margin-top: 22px; }
+#cal-list-head, #ai-brief-head, .ai-sub-head { margin-top: 22px; }
 
 /* 読み上げ（その場で）: 再生の結果 */
 .sp-status {
@@ -1184,3 +1184,14 @@ details.fold:not([open]) { margin-bottom: 4px; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .sp-status.is-done strong { color: #7fd19b; }
 }
+
+/* 学校のお知らせから読み取った行事 */
+.notice-row { gap: 10px; }
+.notice-row .cell-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.notice-row .cell-sub { color: var(--ink-2); font-size: 13px; }
+.notice-check {
+  flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%;
+  border: 1.5px solid var(--ink-off); background: none; color: transparent;
+  display: grid; place-items: center; padding: 0;
+}
+.notice-check[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }

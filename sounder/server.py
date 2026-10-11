@@ -22,8 +22,9 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from . import scheduler as sched_mod
 from . import ai as ai_mod
-from . import calendarfeed, daysoff, neural, tones
+from . import calendarfeed, claudetasks, daysoff, neural, tones
 from . import weather as weather_mod
+from . import config as config_mod
 from .config import Store, ValidationError
 from .eventlog import EventLog
 from .player import Player, SoundNotFound
@@ -79,7 +80,13 @@ class App:
             os.environ.get("SOUNDER_WEATHER_APP")
             or Path(__file__).resolve().parent.parent / "tools" / "weather" / "build" / "Release"
             / "SounderWeather.app" / "Contents" / "MacOS" / "SounderWeather"))
-        self.ai = ai_mod.AI(self.calendar, log=self.log, store=self.store, weather=self.weather)
+        # Claude が確かめた臨時休校。起動時に学校の休み（daysoff）へ入れておく
+        self.closures = claudetasks.Closures(home / "data" / "closures.json")
+        daysoff.EXTRA_CLOSURES.clear()
+        daysoff.EXTRA_CLOSURES.update(
+            {d: f"臨時休校（{why}）" for d, why in self.closures.closed_days().items()})
+        self.ai = ai_mod.AI(self.calendar, log=self.log, store=self.store, weather=self.weather,
+                            closures=self.closures)
         self.scheduler = Scheduler(self.store, self.player, self.log, feed=self.calendar,
                                    extra_feeds=[self.ai], weather=self.weather)
         self.token = token
@@ -307,6 +314,10 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if parts[:1] == ["ai"] and parts[1:2] in (["schedule"], ["closure"], ["notice"]):
+            self._claude_task(parts[1:], method)
+            return
+
         if parts == ["ai", "check"] and method == "POST":
             self._json(app.ai.check(app.store.settings))
             return
@@ -518,6 +529,75 @@ class Handler(BaseHTTPRequestHandler):
             s["next_at"] = nxt[0]["at"] if nxt else None
         return schedules
 
+    def _claude_task(self, parts: list[str], method: str) -> None:
+        """Claude API を使う機能（言葉で予定・臨時休校・お知らせを読む）。"""
+        app = self.app
+        settings = app.store.settings
+        if method != "POST":
+            raise KeyError("/".join(parts))
+        try:
+            if parts == ["schedule"]:
+                text = (self._json_body().get("text") or "").strip()
+                if not text:
+                    raise ValidationError("どんな予定か、文章で入れてください")
+                raw = claudetasks.parse_schedule(app.ai, settings, text[:500])
+                draft = config_mod.validate_schedule(raw)   # sounder の決まりに合うかをここで確かめる
+                draft.pop("id", None)
+                draft.pop("last_fired", None)
+                self._json({"draft": draft})
+            elif parts == ["closure"]:
+                r = app.ai.check_closure(settings, date.today())
+                if r.get("error"):
+                    raise ValidationError(r["error"])
+                self._json({"closure": r})
+            elif parts == ["notice"]:
+                body = self._json_body()
+                events = claudetasks.read_notice(app.ai, settings, body.get("filename") or "",
+                                                 body.get("data") or "")
+                self._json({"events": events})
+            elif parts == ["notice", "apply"]:
+                self._json({"added": self._apply_notice(self._json_body().get("items") or [])})
+            else:
+                raise KeyError("/".join(parts))
+        except claudetasks.ClaudeUnavailable as exc:
+            raise ValidationError(str(exc))
+        except (OSError, ValueError) as exc:
+            if isinstance(exc, ValidationError):
+                raise
+            raise ValidationError(f"Claude API でうまくいきませんでした（{exc}）")
+
+    def _apply_notice(self, items: list) -> list[str]:
+        """読み取った行事のうち、選んだものを予定にする。学校が休みの日は学校の休みとして扱う。"""
+        app = self.app
+        added = []
+        for it in items[:50]:
+            if not isinstance(it, dict):
+                continue
+            title = str(it.get("title") or "").strip()[:80] or "学校の行事"
+            day = str(it.get("date") or "")
+            if it.get("kind") == "no_school":
+                try:
+                    d = date.fromisoformat(day)
+                except ValueError:
+                    raise ValidationError(f"日付が不正です: {day}")
+                app.closures.put(d, {"closed": True, "reason": title, "source_url": "学校のお知らせ",
+                                     "confidence": "high"})
+                daysoff.EXTRA_CLOSURES[d] = f"臨時休校（{title}）"
+                added.append(f"{day} {title}（学校の休み）")
+                continue
+            note = str(it.get("note") or "").strip()
+            text = f"今日は{title}です。" + (f"{note}。" if note and not note.endswith("。") else note)
+            s = app.store.add({
+                "name": title, "kind": "once", "date": day,
+                "time": (it.get("remind_time") or it.get("time") or "07:30"),
+                "note": note,
+                "action": {"type": "both", "sound": "builtin:melody_notice", "text": text,
+                           "volume": app.store.settings["default_volume"]},
+            })
+            app.log("info", f"{title} を追加しました（学校のお知らせから）", schedule_id=s["id"])
+            added.append(f"{s['date']} {s['time']} {title}")
+        return added
+
     def _state(self) -> dict:
         app = self.app
         return {
@@ -529,6 +609,7 @@ class Handler(BaseHTTPRequestHandler):
             "calendars": daysoff.catalog(),
             "calendar_feed": app.calendar.status(),
             "weather": app.weather.status(app.store.settings),
+            "closure_today": app.closures.get(date.today()),
             "next_events": sched_mod.next_events(
                 app.scheduler.all_schedules(), limit=6, settings=app.store.settings),
             "log": app.log.recent(30),

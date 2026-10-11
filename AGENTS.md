@@ -181,6 +181,12 @@ curl -s http://<AIサーバ>:<ポート>/v1/models      # 確認: data[].id に�
 朝のお知らせの時刻・曜日を選ぶ。「今日のお知らせを作って鳴らす」で試せる。
 API: `POST /api/ai/check`、`POST /api/ai/briefing {"play":true}`。AI が答えないときは決まった文で読む。
 
+Claude API を選ぶと、ほかに 3 つ使える（`sounder/claudetasks.py`。答えはどれも JSON スキーマ／strict なツールで受け取る）:
+`POST /api/ai/schedule {"text"}`（予定の下書き。validate_schedule を通して返し、保存はしない）、
+`POST /api/ai/closure`（今日の TDSB の臨時休校をウェブ検索。設定 ai.closure で 11〜4 月の授業日に自動。結果は data/closures.json、
+休校が確かなら daysoff.EXTRA_CLOSURES で学校の休みになる）、`POST /api/ai/notice {"filename","data"(base64)}` →
+`POST /api/ai/notice/apply {"items"}`（お知らせの PDF・画像から行事を読み、選んだものを 1 回だけの予定に）。
+
 Claude API を使う場合は「使う AI」を Claude API にして API キーを入れる（モデルの既定は `claude-opus-5`、
 `fallbacks: "default"` と effort `low` で呼ぶ。標準ライブラリの urllib で直接呼び、python.org 版 Python のために
 `/etc/ssl/cert.pem` で証明書を確かめる）。API キーは `data/config.json` にだけ保存し、`/api/state` などには返さない。

@@ -244,6 +244,9 @@ def validate_settings(raw: Any, current: dict[str, Any]) -> dict[str, Any]:
         url = (a.get("url", cur["url"]) or "").strip()
         if not re.match(r"^https?://[^\s]+$", url) or len(url) > 300:
             raise ValidationError("AI サーバの URL は http:// か https:// で始めてください")
+        cl = a.get("closure") or {}
+        if not isinstance(cl, dict):
+            raise ValidationError("休校の確認の設定が不正です")
         b = a.get("briefing") or {}
         if not isinstance(b, dict):
             raise ValidationError("朝のお知らせの設定が不正です")
@@ -261,6 +264,10 @@ def validate_settings(raw: Any, current: dict[str, Any]) -> dict[str, Any]:
             "claude_api_key": (a["claude_api_key"] if "claude_api_key" in a
                                else cur.get("claude_api_key") or "").strip()[:300],
             "claude_model": (a.get("claude_model", cur.get("claude_model")) or "").strip()[:100],
+            "closure": {
+                "enabled": bool(cl.get("enabled", cur["closure"]["enabled"])),
+                "time": _time(cl.get("time", cur["closure"]["time"]), "休校を確かめる時刻"),
+            },
             "briefing": {
                 "enabled": bool(b.get("enabled", cb["enabled"])),
                 "time": _time(b.get("time", cb["time"]), "朝のお知らせの時刻"),

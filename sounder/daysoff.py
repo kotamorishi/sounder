@@ -102,7 +102,13 @@ CALENDARS = {
 }
 
 
+# 予定表にない休校（大雪などの臨時休校）。日付 → 理由。claudetasks.Closures が確かめたものを入れる
+EXTRA_CLOSURES: dict[date, str] = {}
+
+
 def _tdsb_reason(panel: str, day: date) -> str | None:
+    if day in EXTRA_CLOSURES:
+        return EXTRA_CLOSURES[day]
     for y in TDSB_YEARS:
         if not y["start"] <= day <= y["end"]:
             continue

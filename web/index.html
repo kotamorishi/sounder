@@ -272,6 +272,29 @@
         <button type="button" class="cell cell-button" id="ai-brief-try">今日のお知らせを作って鳴らす</button>
       </div>
       <p class="footnote" id="ai-brief-desc" data-ai-only></p>
+
+      <h3 class="group-head ai-sub-head" data-ai-only data-provider="anthropic">臨時休校（スノーデー）</h3>
+      <div class="group" data-ai-only data-provider="anthropic">
+        <div class="cell">
+          <span class="cell-label" id="ai-closure-label">冬の朝に臨時休校を確かめる</span>
+          <button type="button" class="switch" id="ai-closure" role="switch" aria-checked="false" aria-labelledby="ai-closure-label"></button>
+        </div>
+        <label class="cell">
+          <span class="cell-label">確かめる時刻</span>
+          <input type="time" class="cell-input" id="ai-closure-time">
+        </label>
+        <button type="button" class="cell cell-button" id="ai-closure-now">今日の休校を今すぐ確かめる</button>
+      </div>
+      <p class="footnote" id="ai-closure-desc" data-ai-only data-provider="anthropic"></p>
+
+      <h3 class="group-head ai-sub-head" data-ai-only data-provider="anthropic">学校のお知らせから予定を作る</h3>
+      <div class="group" data-ai-only data-provider="anthropic">
+        <button type="button" class="cell cell-button" id="notice-pick">お知らせ（PDF・写真）を選ぶ</button>
+        <div id="notice-results"></div>
+        <button type="button" class="cell cell-button" id="notice-apply" hidden>選んだものを予定に追加</button>
+      </div>
+      <input type="file" id="notice-file" accept="application/pdf,image/*" hidden>
+      <p class="footnote" id="notice-desc" data-ai-only data-provider="anthropic">ニュースレターや行事予定を Claude が読んで、日付のある行事・休み・早帰り・締め切りを並べます。選んだものを「1回だけ」の予定にします（時刻のないものは指定した時刻に知らせます）。「学校が休み」の日は、学校の休みの予定を鳴らさない日になります。</p>
     </div>
 
     <div class="group-block">
@@ -401,6 +424,16 @@
       </header>
       <div class="sheet-scroll">
         <p class="form-error" id="editor-error" role="alert" hidden></p>
+
+        <div class="group-block" id="nl-block" hidden>
+          <h3 class="group-head">言葉で作る（Claude）</h3>
+          <div class="group">
+            <textarea id="nl-text" class="cell-textarea" rows="2" maxlength="500" aria-label="どんな予定か"
+              placeholder="例）毎週火曜と金曜の7時半にゴミ出し。15分前にも知らせて。祝日は休み"></textarea>
+            <button type="button" class="cell cell-button" id="nl-go">この内容で下書きを作る</button>
+          </div>
+          <p class="footnote">Claude が下の項目を埋めます。中身を確かめてから「保存」してください。</p>
+        </div>
 
         <div class="preset-strip" id="preset-strip">
           <h3 class="group-head">よく使う型</h3>

@@ -39,6 +39,7 @@ git clone https://github.com/kotamorishi/sounder.git && cd sounder
 | 効果音 | 効果音ラボの約 1,400 種を各自の Mac に取り込み | ネット接続（取り込み時のみ） |
 | 天気 | 朝のお知らせに今日の天気（WeatherKit）。雨の時間帯なら傘をすすめる | Apple Developer Program・Xcode |
 | AI（オプション） | 朝に今日の予定をまとめて読み上げ（祝日・休校日にも触れる）。手元の OpenAI 互換の API（vLLM・Ollama など）か Claude API | 手元の AI サーバか Claude API キー |
+| Claude でできること | 言葉で予定を作る（下書きを確かめて保存）、冬の朝に TDSB の臨時休校をウェブ検索で確かめる、学校のお知らせ（PDF・写真）から行事を予定に | Claude API キー |
 | スマホ・外出先 | Tailscale の HTTPS で PWA として使う | Tailscale |
 
 鳴らしすぎない工夫もあります：禁止時間、全体オフ、スリープ復帰などで 2 分以上遅れた予定は鳴らさない、停止ボタン。

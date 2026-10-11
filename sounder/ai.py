@@ -35,6 +35,8 @@ DEFAULTS = {
     "api_key": "",
     "claude_api_key": "",              # Claude API の API キー（画面やログには出さない）
     "claude_model": "",                # "" なら CLAUDE_MODEL
+    # 冬の朝、TDSB の臨時休校（スノーデー）を Claude にウェブ検索で確かめる（Claude API のときだけ）
+    "closure": {"enabled": False, "time": "06:30"},
     "briefing": {"enabled": False, "time": "07:30", "days": [0, 1, 2, 3, 4, 5, 6],
                  # 休みの日（土日とオンタリオ州の祝日）の時刻。"" ならいつもと同じ
                  "holiday_time": "",
@@ -68,7 +70,17 @@ TIMEOUT = 60
 def settings_of(settings: dict) -> dict:
     cfg = {**DEFAULTS, **(settings.get("ai") or {})}
     cfg["briefing"] = {**DEFAULTS["briefing"], **(cfg.get("briefing") or {})}
+    cfg["closure"] = {**DEFAULTS["closure"], **(cfg.get("closure") or {})}
     return cfg
+
+
+WINTER_MONTHS = (11, 12, 1, 2, 3, 4)
+
+
+def school_day(day: date) -> bool:
+    """TDSB の授業がある（はずの）日。予定表で休みの日や週末は確かめなくてよい。"""
+    return day.weekday() < 5 and not daysoff.reason("tdsb_elementary", day) \
+        and not daysoff.reason("tdsb_secondary", day)
 
 
 def is_day_off(day: date) -> bool:
@@ -88,7 +100,8 @@ def _clock(hhmm: str) -> str:
 
 
 class AI:
-    def __init__(self, calendar=None, *, log=None, store=None, weather=None) -> None:
+    def __init__(self, calendar=None, *, log=None, store=None, weather=None, closures=None) -> None:
+        self.closures = closures        # claudetasks.Closures（臨時休校の記録）
         self.calendar = calendar        # calendarfeed.CalendarFeed
         self.weather = weather          # weather.Weather（無ければ天気には触れない）
         self.store = store              # 休校日の暦を使っている予定があれば、その休みも伝える
@@ -200,9 +213,12 @@ class AI:
         schedules = self.store.schedules() if self.store else []
         cals = ["on_holidays"] + [c for c in daysoff.CALENDARS if c.startswith("tdsb_")
                                   and any(c in (s.get("skip") or []) for s in schedules)]
+        closure = self.closures.get(day) if self.closures else None
+        if closure and closure.get("closed") and closure.get("confidence") == "high":
+            notes.append(f"TDSB の学校は臨時休校（{closure.get('reason') or '理由は不明'}）")
         for c in dict.fromkeys(cals):
             r = daysoff.reason(c, day)
-            if r and r != "週末" and r not in notes:
+            if r and r != "週末" and r not in notes and r not in daysoff.EXTRA_CLOSURES.values():
                 notes.append(r if c == "on_holidays" else f"学校は{r}で休み")
         w = self.weather.today(day) if self.weather else {}
         return {"date": day, "events": events, "notes": notes, "weather": w.get("lines") or [],
@@ -337,6 +353,44 @@ class AI:
                             "date": d.isoformat(), "time": off})
         return out
 
+    def _maybe_check_closure(self, now: datetime, cfg: dict, settings: dict) -> None:
+        """冬の授業日の決まった時刻に 1 回、臨時休校を確かめる（裏で）。"""
+        c = cfg["closure"]
+        if not (cfg["enabled"] and c["enabled"] and cfg.get("provider") == "anthropic" and self.closures):
+            return
+        day = now.date()
+        if day.month not in WINTER_MONTHS or not school_day(day) or self.closures.get(day):
+            return
+        at = datetime.combine(day, datetime.strptime(c["time"], "%H:%M").time())
+        if not (at <= now <= at + timedelta(minutes=30)):
+            return
+        with self._lock:
+            if ("closure", day) in self._busy:
+                return
+            self._busy.add(("closure", day))
+        threading.Thread(target=self.check_closure, args=(settings, day), name="ai-closure", daemon=True).start()
+
+    def check_closure(self, settings: dict, day: date) -> dict:
+        """臨時休校を確かめて記録する。休校が確かなら学校の休み（daysoff）に足す。"""
+        from . import claudetasks
+        try:
+            r = claudetasks.check_closure(self, settings, day)
+        except (OSError, ValueError) as exc:
+            r = {"closed": False, "reason": "", "source_url": "", "confidence": "low", "error": str(exc)[:200]}
+            self._log("error", f"臨時休校を確かめられませんでした（{exc}）")
+        else:
+            if r["closed"] and r["confidence"] == "high":
+                self._log("info", f"今日は TDSB が臨時休校です（{r['reason']}）。学校の休みの予定は鳴らしません")
+            else:
+                self._log("info", "臨時休校は見つかりませんでした" + ("（はっきりしない情報あり）" if r["closed"] else ""))
+        if self.closures and not r.get("error"):   # 失敗は記録しない（次の見回りでもう一度確かめる）
+            self.closures.put(day, r)
+            daysoff.EXTRA_CLOSURES.clear()
+            daysoff.EXTRA_CLOSURES.update({d: f"臨時休校（{why}）" for d, why in self.closures.closed_days().items()})
+        with self._lock:
+            self._busy.discard(("closure", day))
+        return r
+
     @staticmethod
     def briefing_action(settings: dict, text: str) -> dict:
         """お知らせを鳴らす中身（前に鳴らす音 ＋ 読み上げ）。"""
@@ -350,6 +404,7 @@ class AI:
     def prepare(self, now: datetime, settings: dict) -> None:
         """鳴る少し前に、お知らせの文を AI に作らせておく（スケジューラが毎回呼ぶ）。"""
         cfg = settings_of(settings)
+        self._maybe_check_closure(now, cfg, settings)
         b = cfg["briefing"]
         if not cfg["enabled"] or not b["enabled"] or now.weekday() not in b["days"]:
             return

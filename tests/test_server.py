@@ -14,6 +14,7 @@ import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta
 from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -338,6 +339,40 @@ class TestSchedules(ServerCase):
         self.assertTrue(r["settings"]["ai"]["claude_api_key_set"])
         state = self.ok("GET", "/api/state")
         self.assertNotIn("sk-ant-secret", json.dumps(state))
+
+    def test_ai_schedule_draft_is_validated_not_saved(self):
+        from sounder import ai as ai_mod
+        from tests.test_claudetasks import FakeClaude, SCHEDULE, text_reply
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeClaude)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        old = ai_mod.CLAUDE_URL
+        ai_mod.CLAUDE_URL = f"http://127.0.0.1:{srv.server_address[1]}/v1"
+        self.addCleanup(setattr, ai_mod, "CLAUDE_URL", old)
+        self.err("POST", "/api/ai/schedule", {"text": "ゴミ出し"})          # Claude を選んでいない
+        self.ok("PATCH", "/api/settings", {"ai": {"enabled": True, "provider": "anthropic",
+                                                  "claude_api_key": "sk-ant-x"}})
+        FakeClaude.replies = [text_reply(SCHEDULE)]
+        draft = self.ok("POST", "/api/ai/schedule", {"text": "毎週火金の7時半にゴミ出し"})["draft"]
+        self.assertEqual((draft["kind"], draft["days"]), ("weekly", [1, 4]))
+        self.assertNotIn("id", draft)
+        self.assertEqual(self.ok("GET", "/api/schedules")["schedules"], [])   # まだ保存しない
+        FakeClaude.replies = [text_reply({**SCHEDULE, "time": "25:99"})]     # 決まりに合わない答えは弾く
+        self.err("POST", "/api/ai/schedule", {"text": "x"})
+
+    def test_ai_notice_apply(self):
+        from sounder import daysoff
+        self.addCleanup(daysoff.EXTRA_CLOSURES.clear)
+        day = (date.today() + timedelta(days=10)).isoformat()
+        r = self.ok("POST", "/api/ai/notice/apply", {"items": [
+            {"title": "写真撮影", "date": day, "time": "", "remind_time": "07:15", "kind": "event", "note": "白いシャツ"},
+            {"title": "臨時の休み", "date": day, "kind": "no_school"}]})
+        self.assertEqual(len(r["added"]), 2)
+        (s,) = self.ok("GET", "/api/schedules")["schedules"]
+        self.assertEqual((s["kind"], s["date"], s["time"]), ("once", day, "07:15"))
+        self.assertEqual(s["action"]["text"], "今日は写真撮影です。白いシャツ。")
+        self.assertEqual(daysoff.reason("tdsb_elementary", date.fromisoformat(day)), "臨時休校（臨時の休み）")
 
     def test_test_falls_back_to_main_without_lead(self):
         sid = self.ok("POST", "/api/schedules",
