@@ -167,7 +167,9 @@ class TestSettings(unittest.TestCase):
                                                      "lead": 15}}, cur)
         self.assertEqual(out["calendar"], {"enabled": True, "calendars": ["a", "b"], "lead": 15,
                                            "sound": "builtin:melody_notice", "voice": "",
-                                           "voice_en": ""})
+                                           "voice_en": "", "muted": [], "muted_series": []})
+        with self.assertRaises(config.ValidationError):
+            config.validate_settings({"calendar": {"muted": "x"}}, cur)
         with self.assertRaises(config.ValidationError):
             config.validate_settings({"calendar": {"lead": 999}}, cur)
         with self.assertRaises(config.ValidationError):
@@ -176,3 +178,46 @@ class TestSettings(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMute(Base):
+    def setUp(self):
+        super().setUp()
+        data = json.loads(self.path.read_text())
+        data["events"].append({"id": "e1|y", "calendar_id": "fam", "title": "算数", "all_day": False,
+                               "start": "2026-10-01T19:00:00-04:00", "end": "2026-10-01T20:00:00-04:00"})
+        self.path.write_text(json.dumps(data, ensure_ascii=False))
+
+    def test_muted_event_is_listed_but_off(self):
+        self.settings["calendar"]["muted"] = ["e1|x"]
+        a, b = self.feed.schedules(self.settings)
+        self.assertEqual((a["enabled"], a["muted"], a["event_id"]), (False, "event", "e1|x"))
+        self.assertEqual((b["enabled"], b["muted"]), (True, None))
+        self.assertTrue(a["recurring"])
+
+    def test_muted_series_turns_off_every_occurrence(self):
+        self.settings["calendar"]["muted_series"] = ["e1"]
+        self.assertEqual([(s["enabled"], s["muted"]) for s in self.feed.schedules(self.settings)],
+                         [(False, "series"), (False, "series")])
+
+    def test_muted_event_does_not_fire(self):
+        self.settings["calendar"]["muted"] = ["e1|x"]
+        (s, _) = self.feed.schedules(self.settings)
+        at = datetime.fromisoformat(f"{s['date']}T{s['time']}")
+        store = config.Store(Path(self.tmp.name) / "config.json")
+        store.update_settings({"calendar": {**self.settings["calendar"], "enabled": True}})
+        played = []
+
+        class P:
+            def play(self, action, **kw):
+                played.append(action)
+        sch = scheduler.Scheduler(store, P(), lambda *a, **k: None, feed=self.feed)
+        sch._last_tick = at - timedelta(seconds=1)
+        sch.tick(at)
+        self.assertEqual(played, [])
+
+    def test_prune_and_series(self):
+        from datetime import date
+        self.assertEqual(calendarfeed.series_of("abc|2026-10-01T19:00:00-04:00"), "abc")
+        self.assertEqual(calendarfeed.prune_muted(["a|2026-09-30T10:00:00-04:00", "b|2026-10-01T09:00:00-04:00"],
+                                                  date(2026, 10, 1)), ["b|2026-10-01T09:00:00-04:00"])

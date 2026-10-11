@@ -108,6 +108,12 @@ def _check_real_date(month: int, day: int) -> None:
         raise ValidationError(f"{month}月{day}日は存在しません")
 
 
+def _ids(value: Any, label: str) -> list[str]:
+    if not isinstance(value, list) or len(value) > 500 or not all(isinstance(x, str) for x in value):
+        raise ValidationError(f"{label}の指定が不正です")
+    return [x[:300] for x in dict.fromkeys(value)]
+
+
 def validate_schedule(raw: Any, *, keep_id: str | None = None) -> dict[str, Any]:
     """Web UI から来たスケジュールを検証して正規化する。"""
     if not isinstance(raw, dict):
@@ -164,6 +170,15 @@ def validate_schedule(raw: Any, *, keep_id: str | None = None) -> dict[str, Any]
     if not isinstance(skip, list) or any(c not in daysoff.CALENDARS for c in skip):
         raise ValidationError("お休みの日の指定が不正です")
     s["skip"] = [c for c in daysoff.CALENDARS if c in skip] if kind != "once" else []
+
+    # この日だけ鳴らさない（タイムラインで選んだ日。繰り返しの予定だけ）
+    off = raw.get("skip_dates") or []
+    if not isinstance(off, list) or len(off) > 400:
+        raise ValidationError("鳴らさない日の指定が不正です")
+    for d in off:
+        if not isinstance(d, str) or not DATE_RE.match(d):
+            raise ValidationError("鳴らさない日は YYYY-MM-DD 形式で指定してください")
+    s["skip_dates"] = sorted(set(off)) if kind != "once" else []
 
     # 事前予告（お出かけ 10 分前など）
     leads = raw.get("lead_times") or []
@@ -235,6 +250,8 @@ def validate_settings(raw: Any, current: dict[str, Any]) -> dict[str, Any]:
             "sound": (c.get("sound", cur["sound"]) or "").strip()[:300],
             "voice": (c.get("voice", cur["voice"]) or "").strip()[:80],
             "voice_en": (c.get("voice_en", cur["voice_en"]) or "").strip()[:80],
+            "muted": _ids(c.get("muted", cur["muted"]), "読み上げない予定"),
+            "muted_series": _ids(c.get("muted_series", cur["muted_series"]), "読み上げない繰り返しの予定"),
         }
     if "ai" in raw:
         a = raw["ai"] or {}
@@ -398,6 +415,8 @@ class Store:
         with self._lock:
             for i, old in enumerate(self._data["schedules"]):
                 if old["id"] == sid:
+                    if isinstance(raw, dict) and "skip_dates" not in raw:
+                        raw = {**raw, "skip_dates": old.get("skip_dates") or []}   # 編集画面は送ってこない
                     s = validate_schedule(raw, keep_id=sid)
                     self._check_sounds(s)
                     s["last_fired"] = old.get("last_fired")

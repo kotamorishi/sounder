@@ -433,6 +433,34 @@ class TestCalendar(ServerCase):
         self.assertFalse(ev["enabled"])
 
 
+class TestSkipAndMute(ServerCase):
+    def test_skip_one_day_and_undo(self):
+        s = self.ok("POST", "/api/schedules", self.sample(days=[0, 1, 2, 3, 4, 5, 6]))["schedule"]
+        d = self.ok("POST", f"/api/schedules/{s['id']}/skip", {"date": "2026-09-22", "off": True})
+        self.assertEqual(d["schedule"]["skip_dates"], ["2026-09-22"])
+        cal = self.ok("GET", "/api/calendar?start=2026-09-21&days=2")["days"]
+        self.assertEqual([e["skipped"] for e in cal[1]["events"]], [True, True])
+        self.assertEqual([e["skipped"] for e in cal[0]["events"]], [False, False])
+        d = self.ok("POST", f"/api/schedules/{s['id']}/skip", {"date": "2026-09-22", "off": False})
+        self.assertEqual(d["schedule"]["skip_dates"], [])
+        self.err("POST", f"/api/schedules/{s['id']}/skip", {"date": "x"})
+        once = self.ok("POST", "/api/schedules", self.sample(kind="once", date="2026-09-22"))["schedule"]
+        self.err("POST", f"/api/schedules/{once['id']}/skip", {"date": "2026-09-22"})
+
+    def test_mute_calendar_event_and_series(self):
+        ev = "abc|2999-01-01T10:00:00-05:00"
+        d = self.ok("POST", "/api/calendar/mute", {"event": ev, "off": True})
+        self.assertEqual(d["settings"]["calendar"]["muted"], [ev])
+        d = self.ok("POST", "/api/calendar/mute", {"event": ev, "scope": "series", "off": True})
+        self.assertEqual(d["settings"]["calendar"]["muted_series"], ["abc"])
+        d = self.ok("POST", "/api/calendar/mute", {"event": ev, "off": False})
+        self.assertEqual(d["settings"]["calendar"]["muted"], [])
+        # 設定画面がほかの項目だけ保存しても消えない
+        self.ok("PATCH", "/api/settings", {"calendar": {"lead": 5}})
+        self.assertEqual(self.app.store.settings["calendar"]["muted_series"], ["abc"])
+        self.err("POST", "/api/calendar/mute", {"event": ev, "scope": "all"})
+
+
 class TestPreviewAndStop(ServerCase):
     def test_preview_sound(self):
         self.ok("POST", "/api/preview", {"type": "sound", "sound": "builtin:ding", "volume": 0.3})

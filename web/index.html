@@ -711,6 +711,19 @@
   <button type="button" class="as-btn as-cancel" id="as-cancel">キャンセル</button>
 </dialog>
 
+<!-- ===== タイムラインの 1 回ぶん（この日だけオフ・カレンダーの予定） ===== -->
+<dialog id="occsheet" class="actionsheet" aria-labelledby="oc-title">
+  <div class="as-group">
+    <div class="as-title oc-head">
+      <b id="oc-title"></b>
+      <span id="oc-sub"></span>
+      <span id="oc-state"></span>
+    </div>
+    <div id="oc-actions"></div>
+  </div>
+  <button type="button" class="as-btn as-cancel" id="oc-cancel">閉じる</button>
+</dialog>
+
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 <script src="/lib.js"></script>
 <script src="/app.js"></script>

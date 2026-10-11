@@ -1068,6 +1068,10 @@ input[type="range"]::-moz-range-thumb {
 .as-btn.is-danger { color: var(--err); }
 .as-btn.as-cancel { font-weight: 500; background: var(--sheet-btn); }
 .as-group { background: var(--sheet-btn); }
+.oc-head { display: flex; flex-direction: column; gap: 3px; }
+.oc-head b { font-size: 15px; color: var(--ink); }
+#oc-state:empty, #oc-sub:empty { display: none; }
+#oc-actions .as-btn + .as-btn { border-top: .5px solid var(--bar-line); }
 
 .toast {
   position: fixed;

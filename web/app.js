@@ -349,6 +349,10 @@ function alarmRow(s) {
   const detailParts = whatParts(s.action);
   if (s.lead_times && s.lead_times.length) detailParts.push(` · ${SL.leadLabel(s.lead_times)}に予告`);
   if (s.outing) detailParts.push(' · 天気と服装も');
+  const skipped = (s.skip_dates || []).filter((d) => d >= SL.isoDate(new Date()));
+  if (skipped.length) {
+    detailParts.push(` · ${skipped.slice(0, 2).map((d) => SL.onceLabel(d)).join('・')}${skipped.length > 2 ? ` ほか${skipped.length - 2}日` : ''}は鳴らさない`);
+  }
   main.append(phrased('span', 'alarm-detail', detailParts));
   if (warn) {
     const w = el('span', 'alarm-warn');
@@ -990,8 +994,8 @@ function tlCard(e, leads, sched) {
     st.append(el('span', null, msg));
     b.append(st);
   }
-  b.setAttribute('aria-label', `${hmAt(e.at)} ${e.name}${msg ? '、' + msg : ''}。タップで編集`);
-  b.addEventListener('click', () => sched && openEditor(sched));
+  b.setAttribute('aria-label', `${hmAt(e.at)} ${e.name}${msg ? '、' + msg : ''}`);
+  b.addEventListener('click', () => openOccurrence(e, sched));
   return b;
 }
 
@@ -1004,7 +1008,7 @@ function tlLeadOnly(e, sched) {
     el('span', 'n', `${e.name}（${hmAt(e.main_at)}）`));
   b.setAttribute('aria-label', `${hmAt(e.at)} ${e.name}の予告${msg ? '、' + msg : ''}`);
   if (msg) b.title = msg;
-  b.addEventListener('click', () => sched && openEditor(sched));
+  b.addEventListener('click', () => openOccurrence(e, sched));
   wrap.append(b);
   return wrap;
 }
@@ -1018,7 +1022,7 @@ function tlChimes(rows, sched) {
     b.append(icon(muted && e.quiet ? 'moon' : 'bell', 14), el('b', null, label), el('span', 'n', e.name));
     b.setAttribute('aria-label', `${label} ${e.name}${msg ? '、' + msg : ''}`);
     if (msg) b.title = msg;
-    b.addEventListener('click', () => sched && openEditor(sched));
+    b.addEventListener('click', () => openOccurrence(e, sched));
     return b;
   };
   if (rows.length > 4) {
@@ -1030,6 +1034,94 @@ function tlChimes(rows, sched) {
     for (const e of rows) wrap.append(mk(hmAt(e.at), e));
   }
   return wrap;
+}
+
+// ---------------------------------------------------------------- タイムラインの 1 回ぶん
+
+let ocResolve = null;
+/** 選択肢のシート。options: [{ key, label, danger }]。選んだ key（閉じたら null）を返す */
+function choiceSheet(title, sub, stateText, options) {
+  const d = $('#occsheet');
+  $('#oc-title').textContent = title;
+  $('#oc-sub').textContent = sub || '';
+  $('#oc-state').textContent = stateText || '';
+  const box = $('#oc-actions');
+  box.textContent = '';
+  if (ocResolve) ocResolve(null);
+  return new Promise((resolve) => {
+    ocResolve = resolve;
+    for (const o of options) {
+      const b = el('button', 'as-btn' + (o.danger ? ' is-danger' : ''), o.label);
+      b.type = 'button';
+      b.addEventListener('click', () => closeChoice(o.key));
+      box.append(b);
+    }
+    d.showModal();
+  });
+}
+
+function closeChoice(key) {
+  const d = $('#occsheet');
+  if (d.open) d.close();
+  if (ocResolve) { const r = ocResolve; ocResolve = null; r(key); }
+}
+
+/** タイムラインで 1 回ぶんを押したとき。繰り返しの予定は「この日だけ鳴らさない」、カレンダーは読み上げる・読み上げない */
+async function openOccurrence(e, sched) {
+  if (e.source === 'calendar') return openCalendarEvent(e);
+  if (!sched) return;
+  if (sched.kind === 'once') { openEditor(sched); return; }
+  const day = e.base_date || e.at.slice(0, 10);
+  const [msg] = SL.eventState(e, tlMaster);
+  const chimes = sched.kind === 'interval';
+  const opts = [];
+  if (e.skipped) opts.push({ key: 'on', label: 'この日も鳴らす' });
+  else if (!e.past) opts.push({ key: 'off', label: chimes ? 'この日は鳴らさない（この日の分すべて）' : 'この日だけ鳴らさない', danger: true });
+  if (!e.past) opts.push({ key: 'test', label: '試しに鳴らす' });
+  opts.push({ key: 'edit', label: '予定を編集（毎回の設定）' });
+  const when = chimes ? SL.onceLabel(day) : `${SL.onceLabel(day)} ${hmAt(e.main_at || e.at)}`;
+  const key = await choiceSheet(sched.name, `${when} · ${SL.repeatSummary(sched)}`, msg, opts);
+  if (key === 'edit') openEditor(sched);
+  else if (key === 'test') testSchedule(sched.id, e.tag);
+  else if (key === 'on' || key === 'off') {
+    try {
+      const data = await api('POST', `/api/schedules/${sched.id}/skip`, { date: day, off: key === 'off' });
+      Object.assign(sched, data.schedule);
+      toast(key === 'off' ? `${SL.onceLabel(day)} は鳴らしません` : `${SL.onceLabel(day)} も鳴らします`);
+      renderSchedules();
+      poll();
+      loadTimeline(false);
+    } catch (err) { fail(err); }
+  }
+}
+
+async function openCalendarEvent(e) {
+  const day = (e.starts_at || e.at).slice(0, 10);
+  const span = e.starts_at ? `${hmAt(e.starts_at)}–${hmAt(e.ends_at || e.starts_at)}` : hmAt(e.at);
+  let msg = SL.eventState(e, tlMaster)[0];
+  if (!msg) msg = `${hmAt(e.at)} に読み上げます`;
+  const opts = [];
+  if (e.muted !== 'series' && (!e.past || e.muted === 'event')) {
+    opts.push(e.muted === 'event' ? { key: 'event:on', label: 'この回を読み上げる' }
+      : { key: 'event:off', label: 'この回は読み上げない', danger: true });
+  }
+  if (e.recurring || e.muted === 'series') {
+    opts.push(e.muted === 'series' ? { key: 'series:on', label: '繰り返しの予定をまた読み上げる' }
+      : { key: 'series:off', label: '繰り返しの予定をすべて読み上げない', danger: true });
+  }
+  if (!e.past) opts.push({ key: 'test', label: '試しに読み上げる' });
+  const key = await choiceSheet(e.name, `カレンダー「${e.calendar || ''}」 · ${SL.onceLabel(day)} ${span}`, msg, opts);
+  if (key === 'test') { testSchedule(e.schedule_id); return; }
+  if (!key) return;
+  const [scope, onoff] = key.split(':');
+  try {
+    const data = await api('POST', '/api/calendar/mute', { event: e.event_id, scope, off: onoff === 'off' });
+    state.settings = data.settings;
+    toast(onoff === 'off' ? (scope === 'series' ? '繰り返しの予定をすべて読み上げません' : 'この回は読み上げません')
+      : '読み上げます');
+    poll();
+    loadTimeline(false);
+  } catch (err) { fail(err); }
 }
 
 function shiftWeek(delta) {
@@ -2425,6 +2517,9 @@ function wire() {
   // 確認シート
   $('#as-ok').addEventListener('click', () => closeSheet(true));
   $('#as-cancel').addEventListener('click', () => closeSheet(false));
+  $('#oc-cancel').addEventListener('click', () => closeChoice(null));
+  $('#occsheet').addEventListener('cancel', (e) => { e.preventDefault(); closeChoice(null); });
+  $('#occsheet').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeChoice(null); });
   $('#actionsheet').addEventListener('cancel', (e) => { e.preventDefault(); closeSheet(false); });
   $('#actionsheet').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeSheet(false); });
 

@@ -307,6 +307,7 @@
   /** タイムラインの 1 件の状態 [表示する文, 鳴らないので破線にするか] */
   function eventState(e, master) {
     if (e.off) return [e.off + (e.past ? 'のため鳴らしませんでした' : 'のため鳴りません'), true];
+    if (e.muted) return [e.muted === 'series' ? '繰り返しの予定をすべて読み上げない設定です' : 'この回は読み上げない設定です', true];
     if (e.past) {
       if (e.result === 'fired') return ['再生しました', false];
       if (e.result === 'skipped') {

@@ -314,6 +314,24 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if parts == ["calendar", "mute"] and method == "POST":
+            # カレンダー連携の予定を読み上げない／また読み上げる。scope="event" はその回だけ、"series" は繰り返しのすべての回
+            body = self._json_body()
+            event = body.get("event")
+            scope = body.get("scope", "event")
+            if not isinstance(event, str) or not event or scope not in ("event", "series"):
+                raise ValidationError("予定の指定が不正です")
+            cur = calendarfeed.settings_of(app.store.settings)
+            key, field = (event, "muted") if scope == "event" else (calendarfeed.series_of(event), "muted_series")
+            ids = [x for x in cur[field] if x != key]
+            if body.get("off", True):
+                ids.append(key)
+            if field == "muted":
+                ids = calendarfeed.prune_muted(ids, date.today())
+            settings = app.store.update_settings({"calendar": {field: ids}})
+            self._json({"settings": public_settings(settings)})
+            return
+
         if parts[:1] == ["ai"] and parts[1:2] in (["schedule"], ["closure"], ["notice"]):
             self._claude_task(parts[1:], method)
             return
@@ -414,6 +432,27 @@ class Handler(BaseHTTPRequestHandler):
                     app.log("info", f"{(s or {}).get('name', sid)} を削除しました")
                     self._json({"ok": True})
                     return
+            elif tail == "skip" and method == "POST":
+                # この日だけ鳴らさない／また鳴らす（タイムラインから）
+                body = self._json_body()
+                day = body.get("date")
+                try:
+                    date.fromisoformat(day if isinstance(day, str) else "")
+                except ValueError:
+                    raise ValidationError("日付は YYYY-MM-DD 形式で指定してください")
+                s = app.store.get(sid)
+                if not s:
+                    raise KeyError(sid)
+                if s["kind"] == "once":
+                    raise ValidationError("1回だけの予定は、予定そのものをオフにしてください")
+                dates = [d for d in s.get("skip_dates") or [] if d != day]
+                if body.get("off", True):
+                    dates.append(day)
+                s = app.store.patch(sid, {"skip_dates": dates})
+                word = "鳴らさない" if day in s["skip_dates"] else "鳴らす"
+                app.log("info", f"{s['name']}: {day} は{word}ことにしました", schedule_id=sid)
+                self._json({"schedule": self._decorate([s])[0]})
+                return
             elif tail == "test" and method == "POST":
                 # 保存した予定のほか、カレンダー連携の予定（id が cal- で始まる）も鳴らせる
                 s = app.store.get(sid) or next(

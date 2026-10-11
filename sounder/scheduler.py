@@ -7,10 +7,11 @@ import threading
 import time
 from datetime import date, datetime, timedelta
 
-from . import daysoff
+from . import calendarfeed, daysoff
 
 DAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"]
 LAST_DAY = "last"
+DAY_SKIPPED = "この日はオフ"
 
 # スリープ復帰などで取りこぼした通知を、何秒前までなら鳴らすか
 DEFAULT_GRACE = 120.0
@@ -47,7 +48,8 @@ def day_occurrences(sched: dict, day: date, *, ignore_skip: bool = False
     種別は "main" か "lead"。予告は基準時刻より前なので、前日にまたがることもある。
     お休みの日（sched["skip"] の暦で休み）は何も返さない。予告も一緒に鳴らさない。
     """
-    if not ignore_skip and daysoff.off_reason(sched.get("skip"), day):
+    if not ignore_skip and (daysoff.off_reason(sched.get("skip"), day)
+                            or day.isoformat() in (sched.get("skip_dates") or ())):
         return []
     kind = sched["kind"]
     mains: list[datetime] = []
@@ -182,7 +184,9 @@ def calendar_days(schedules: list[dict], start: date, days: int,
         day = start + timedelta(days=i)
         events = []
         for s in schedules:
-            off = daysoff.off_reason(s.get("skip"), day)
+            # この日だけオフにした日は、祝日などと同じく「鳴らない」として薄く出す
+            skipped = day.isoformat() in (s.get("skip_dates") or ())
+            off = DAY_SKIPPED if skipped else daysoff.off_reason(s.get("skip"), day)
             for when, tag, lead in day_occurrences(s, day, ignore_skip=True):
                 events.append({
                     "schedule_id": s["id"],
@@ -200,7 +204,12 @@ def calendar_days(schedules: list[dict], start: date, days: int,
                     "past": when <= now,
                     "result": outcome(s, when, tag, lead, log_entries) if when <= now else None,
                     "off": off,
+                    "skipped": skipped,
+                    "base_date": day.isoformat(),   # どの日の回か（0 時台の予定の予告は前日に鳴る）
                     "source": s.get("source"),
+                    "event_id": s.get("event_id"),
+                    "muted": s.get("muted"),
+                    "recurring": s.get("recurring"),
                     "calendar": s.get("calendar"),
                     "starts": s.get("starts"),
                     "starts_at": s.get("starts_at"),
@@ -370,8 +379,12 @@ class Scheduler:
             sleep_idle(60.0 * settings.get("tts_idle_minutes", 30))
 
     def clean_past_once(self, today: date) -> list[str]:
-        """日付が昨日以前の「1回だけ」の予定を消す（1 日 1 回）。今日の分はタイムラインで結果を見られるよう残す。"""
+        """日付が昨日以前の「1回だけ」の予定を消す（1 日 1 回）。今日の分はタイムラインで結果を見られるよう残す。
+
+        繰り返しの予定の「この日だけオフ」と、カレンダー連携の「この回は読み上げない」も、過ぎた日のものを捨てる。
+        """
         removed = []
+        self._prune_skips(today)
         for s in self.store.schedules():
             if s.get("kind") != "once" or (s.get("date") or "9999") >= today.isoformat():
                 continue
@@ -382,6 +395,21 @@ class Scheduler:
             removed.append(s["name"])
             self.log("info", f"過ぎた1回だけの予定「{s['name']}」（{s['date']}）を削除しました")
         return removed
+
+    def _prune_skips(self, today: date) -> None:
+        for s in self.store.schedules():
+            dates = s.get("skip_dates") or []
+            keep = [d for d in dates if d >= today.isoformat()]
+            if keep != dates:
+                try:
+                    self.store.patch(s["id"], {"skip_dates": keep})
+                except (KeyError, ValueError):
+                    pass
+        cal = self.store.settings.get("calendar") or {}
+        muted = cal.get("muted") or []
+        keep = calendarfeed.prune_muted(muted, today)
+        if keep != muted:
+            self.store.update_settings({"calendar": {"muted": keep}})
 
     def _prefetch(self, now: datetime, settings: dict) -> None:
         """もうすぐ鳴る予定の読み上げを、再生層に先に作らせる。"""

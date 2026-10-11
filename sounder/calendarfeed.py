@@ -13,7 +13,7 @@ import hashlib
 import json
 import re
 import threading
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 DEFAULTS = {
@@ -23,6 +23,8 @@ DEFAULTS = {
     "sound": "builtin:melody_notice",   # 読み上げの前に鳴らす音（"" なら読み上げだけ）
     "voice": "",              # "" なら設定の既定の声
     "voice_en": "",           # 英語の予定（タイトルに日本語が無い）の声。"" なら voice と同じ
+    "muted": [],              # 読み上げない回（予定の id。「識別子|開始時刻」）
+    "muted_series": [],       # 読み上げない繰り返しの予定（id の「|」より前。すべての回に効く）
 }
 # ひらがな・カタカナ・漢字が 1 文字でもあれば日本語の予定として読む
 JAPANESE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]")
@@ -45,6 +47,16 @@ def sentence(title: str, lead: int) -> str:
             return f"It's time for {title}."
         return f"{title} starts in {lead} minute{'s' if lead != 1 else ''}."
     return f"{title}の時間です。" if lead <= 0 else f"{lead}分後に、{title}があります。"
+
+
+def series_of(event_id) -> str:
+    """回の id（「識別子|開始時刻」）→ 繰り返しの予定の識別子。"""
+    return str(event_id or "").split("|", 1)[0]
+
+
+def prune_muted(muted: list[str], today: date) -> list[str]:
+    """読み上げない回のうち、もう過ぎた日のものを捨てる。"""
+    return [m for m in muted if m.split("|", 1)[-1][:10] >= today.isoformat()]
 
 
 class CalendarFeed:
@@ -89,8 +101,14 @@ class CalendarFeed:
         wanted = set(cfg["calendars"])
         names = {c.get("id"): c.get("title") for c in self.data().get("calendars") or []}
         lead = int(cfg["lead"])
+        muted, muted_series = set(cfg["muted"]), set(cfg["muted_series"])
+        events = self.data().get("events") or []
+        # 同じ識別子の回がほかにもあれば繰り返しの予定（画面で「すべての回」を選べるようにする）
+        counts: dict[str, int] = {}
+        for ev in events:
+            counts[series_of(ev.get("id"))] = counts.get(series_of(ev.get("id")), 0) + 1
         out = []
-        for ev in self.data().get("events") or []:
+        for ev in events:
             if ev.get("all_day") or ev.get("calendar_id") not in wanted:
                 continue
             try:
@@ -108,8 +126,11 @@ class CalendarFeed:
             if cfg["sound"]:
                 action["sound"] = cfg["sound"]
             key = hashlib.sha256(f"{ev.get('id')}|{lead}".encode()).hexdigest()[:12]
+            series = series_of(ev.get("id"))
+            mute = "series" if series in muted_series else "event" if ev.get("id") in muted else None
             out.append({
-                "id": f"cal-{key}", "source": "calendar", "enabled": True, "kind": "once",
+                "id": f"cal-{key}", "source": "calendar", "enabled": not mute, "kind": "once",
+                "event_id": ev.get("id") or "", "muted": mute, "recurring": counts.get(series, 0) > 1,
                 "name": title, "date": at.date().isoformat(), "time": at.strftime("%H:%M"),
                 "calendar": names.get(ev.get("calendar_id"), ""), "starts": start.strftime("%H:%M"),
                 # タイムラインでは、読み上げの時刻ではなく予定そのものの時間帯に置く

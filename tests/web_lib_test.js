@@ -214,6 +214,10 @@ eq(SL.nextNote({ quiet: true }, { quiet_hours: NIGHT }), '禁止時間（23:00�
 eq(SL.nextNote({ quiet: true }), '禁止時間（〜）なので鳴りません', 'nextNote 設定なし');
 
 // --- タイムラインの状態 ---
+eq(SL.eventState({ off: 'この日はオフ', past: false, enabled: true }, true),
+   ['この日はオフのため鳴りません', true], 'eventState この日だけオフ');
+eq(SL.eventState({ muted: 'event', past: false, enabled: false }, true),
+   ['この回は読み上げない設定です', true], 'eventState カレンダーのこの回');
 eq(SL.eventState({ past: true, result: 'fired' }, true), ['再生しました', false], 'eventState 再生');
 eq(SL.eventState({ off: 'PA デー', past: false, enabled: true }, true),
    ['PA デーのため鳴りません', true], 'eventState 休校日');

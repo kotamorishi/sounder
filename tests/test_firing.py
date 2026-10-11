@@ -242,3 +242,44 @@ class TestCleanPastOnce(Base):
         self.assertEqual(len(self.store.schedules()), 3)
         self.sched.tick(datetime(2026, 9, 22, 0, 0, 1))
         self.assertNotIn(today["id"], [s["id"] for s in self.store.schedules()])
+
+
+class TestSkipDates(Base):
+    def test_skipped_day_does_not_fire_main_or_lead(self):
+        s = self.add(name="お迎え", time="08:30", lead_times=[10],
+                     lead_action={"sound": "builtin:ding"}, skip_dates=["2026-09-21"])
+        self.assertEqual(s["skip_dates"], ["2026-09-21"])
+        t = datetime(2026, 9, 21, 8, 0)
+        self.sched._last_tick = t
+        self.sched.tick(datetime(2026, 9, 21, 8, 31))
+        self.assertEqual(self.player.played, [])
+        # 翌日はいつもどおり
+        self.sched._last_tick = datetime(2026, 9, 22, 8, 19)
+        self.sched.tick(datetime(2026, 9, 22, 8, 21))
+        self.sched.tick(datetime(2026, 9, 22, 8, 31))
+        self.assertEqual(len(self.player.played), 2)
+
+    def test_timeline_shows_skipped_day_as_off(self):
+        s = self.add(name="お迎え", skip_dates=["2026-09-21"])
+        days = scheduler.calendar_days([s], datetime(2026, 9, 21).date(), 2,
+                                       now=datetime(2026, 9, 20))
+        (a,), (b,) = days[0]["events"], days[1]["events"]
+        self.assertEqual((a["off"], a["skipped"], a["base_date"]), ("この日はオフ", True, "2026-09-21"))
+        self.assertEqual((b["off"], b["skipped"]), (None, False))
+
+    def test_editor_save_keeps_skip_dates_and_once_has_none(self):
+        s = self.add(name="お迎え", skip_dates=["2026-09-21"])
+        raw = {k: v for k, v in s.items() if k != "skip_dates"}
+        self.assertEqual(self.store.replace(s["id"], raw)["skip_dates"], ["2026-09-21"])
+        o = self.add(name="単発", kind="once", date="2026-09-21", skip_dates=["2026-09-21"])
+        self.assertEqual(o["skip_dates"], [])
+        with self.assertRaises(config.ValidationError):
+            self.add(skip_dates=["9/21"])
+
+    def test_past_skip_dates_are_pruned_daily(self):
+        s = self.add(name="お迎え", skip_dates=["2026-09-20", "2026-09-21", "2026-09-30"])
+        self.store.update_settings({"calendar": {"muted": ["a|2026-09-20T10:00:00-04:00",
+                                                           "b|2026-09-21T10:00:00-04:00"]}})
+        self.sched.tick(datetime(2026, 9, 21, 0, 0, 5))
+        self.assertEqual(self.store.get(s["id"])["skip_dates"], ["2026-09-21", "2026-09-30"])
+        self.assertEqual(self.store.settings["calendar"]["muted"], ["b|2026-09-21T10:00:00-04:00"])
