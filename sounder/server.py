@@ -589,7 +589,7 @@ class Handler(BaseHTTPRequestHandler):
             text = f"今日は{title}です。" + (f"{note}。" if note and not note.endswith("。") else note)
             s = app.store.add({
                 "name": title, "kind": "once", "date": day,
-                "time": (it.get("remind_time") or it.get("time") or "07:30"),
+                "time": (it.get("remind_time") or it.get("time") or "08:20"),
                 "note": note,
                 "action": {"type": "both", "sound": "builtin:melody_notice", "text": text,
                            "volume": app.store.settings["default_volume"]},

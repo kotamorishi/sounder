@@ -1334,7 +1334,7 @@ async function readNotice(file) {
       fr.readAsDataURL(file);
     });
     const r = await api('POST', '/api/ai/notice', { filename: file.name, data });
-    noticeEvents = r.events.map((e) => Object.assign({ pick: e.kind !== 'other', remind_time: e.time || '07:30' }, e));
+    noticeEvents = r.events.map((e) => Object.assign({ pick: e.kind !== 'other', remind_time: e.time || '08:20' }, e));
     renderNotice();
     toast(r.events.length ? `${r.events.length} 件見つかりました` : '日付のある行事が見つかりませんでした', !r.events.length);
   } catch (e) { fail(e); } finally {
