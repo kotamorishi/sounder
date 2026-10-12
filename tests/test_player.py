@@ -543,48 +543,76 @@ class TestJobs(Base):
 
 
 class TestAirPlay(Base):
-    """鳴らす場所が AirPlay のとき。補助スクリプトはダミー（終了コードを選べる）。"""
+    """鳴らす場所が AirPlay のとき。補助スクリプトはダミー（つながる機器を選べる）。"""
 
     def setUp(self):
         super().setUp()
         from sounder import airplay
-        self.rc = self.home / "rc"
+        player_mod.AIRPLAY_DELAY = 0
+        self.ok = self.home / "ok"
         script = self.home / "send.py"
         script.write_text("")
-        py = self._script("airpy", '#!/bin/sh\nprintf \'airplay %s\\n\' "$*" >> "{log}"\nexit $(cat "RC")\n'
-                          .replace("RC", str(self.rc)))
-        self.p.airplay = airplay.AirPlay(Path(py), script)
+        # ok ファイルに書いた id だけ「つながった」ことにする
+        body = ('#!/bin/sh\nprintf \'airplay %s\\n\' "$*" >> "{log}"\n'
+                'ids=$(cat "OK")\n'
+                'if [ -z "$ids" ]; then echo \'{{"connected": [], "failed": ["ABC"]}}\'; exit 2; fi\n'
+                'echo "{{\\"connected\\": [$ids]}}"\nexit 0\n').replace("OK", str(self.ok))
+        self.p.airplay = airplay.AirPlay(Path(self._script("airpy", body)), script)
 
-    def play(self, rc):
-        self.rc.write_text(str(rc))
-        out = {"id": "ABC", "name": "Bedroom", "address": "192.0.2.1"}
-        jid = self.p.play({"type": "sound", "sound": "builtin:ding", "repeat": 2, "output": out},
+    def tearDown(self):
+        player_mod.AIRPLAY_DELAY = 2.0
+        super().tearDown()
+
+    def play(self, connected, outputs):
+        self.ok.write_text(connected)
+        jid = self.p.play({"type": "sound", "sound": "builtin:ding", "repeat": 2, "outputs": outputs},
                           settings={"default_volume": 0.5}, label="起床")
         end = time.time() + 5
         while time.time() < end and self.p.job(jid)["state"] not in ("done", "failed", "stopped"):
             time.sleep(0.02)
         return self.p.job(jid)
 
-    def test_sends_files_to_the_device(self):
-        job = self.play(0)
+    BED = {"id": "ABC", "name": "Bedroom", "address": "192.0.2.1"}
+    LIV = {"id": "DEF", "name": "Living", "address": ""}
+
+    def test_sends_to_every_device_at_once(self):
+        job = self.play('"ABC", "DEF"', [self.BED, self.LIV])
         self.assertEqual(job["state"], "done")
-        self.assertEqual(job["output"], "Bedroom")
+        self.assertEqual(job["output"], "Bedroom・Living")
         (line,) = self.recorded()
-        self.assertIn("play --id ABC --address 192.0.2.1 --volume 0.500 --", line)
+        self.assertIn("play --device ABC@192.0.2.1 --device DEF --volume 0.500 --", line)
         self.assertEqual(line.count("ding.wav"), 2)   # 繰り返しの分も送る
 
-    def test_falls_back_to_this_mac(self):
-        job = self.play(2)
+    def test_with_this_mac_too(self):
+        job = self.play('"ABC"', [self.BED, {"id": "mac", "name": "この Mac"}])
+        self.assertEqual(job["output"], "Bedroom・この Mac")
+        lines = self.recorded()
+        self.assertEqual(sum(l.startswith("afplay") for l in lines), 2)
+        self.assertFalse(job.get("fallback"))
+
+    def test_falls_back_to_this_mac_when_nothing_connects(self):
+        job = self.play("", [self.BED])
         self.assertEqual(job["state"], "done")
         self.assertTrue(job["fallback"])
         lines = self.recorded()
         self.assertTrue(lines[0].startswith("airplay"))
         self.assertEqual(sum(l.startswith("afplay") for l in lines), 2)
-        self.assertTrue(any("この Mac で鳴らします" in m for _lv, m in self.msgs))
+        self.assertTrue(any("Bedroom" in m and "鳴らせません" in m for _lv, m in self.msgs))
+
+    def test_partly_connected_also_plays_here(self):
+        job = self.play('"ABC"', [self.BED, self.LIV])
+        self.assertTrue(job["fallback"])
+        self.assertIn("Living", job["note"])
+        self.assertEqual(job["output"], "Bedroom・この Mac")
+        self.assertEqual(sum(l.startswith("afplay") for l in self.recorded()), 2)
 
     def test_falls_back_when_not_installed(self):
         from sounder import airplay
         self.p.airplay = airplay.AirPlay(self.home / "none", self.home / "none.py")
-        job = self.play(0)
+        job = self.play('"ABC"', [self.BED])
         self.assertTrue(job["fallback"])
         self.assertEqual(sum(l.startswith("afplay") for l in self.recorded()), 2)
+
+    def test_old_single_output_is_read(self):
+        self.assertEqual(player_mod.outputs_of({"output": self.BED}), [self.BED])
+        self.assertEqual(player_mod.outputs_of({}), [])

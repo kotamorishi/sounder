@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import select
 import re
 import uuid
 from collections import OrderedDict, deque
@@ -32,6 +33,21 @@ JOB_KEEP = 50
 VOICE_LANGS = ("ja", "en")
 
 
+# 鳴らす場所で「この Mac」を表す id
+MAC = "mac"
+# AirPlay の機器が鳴り始めるまでの遅れ（秒）。この Mac でも一緒に鳴らすときは、これだけ待ってから鳴らす
+AIRPLAY_DELAY = 2.0
+AIRPLAY_CONNECT_TIMEOUT = 20.0
+
+
+def outputs_of(action: dict) -> list[dict]:
+    """鳴らす場所の一覧。空ならこの Mac。古い形（output 1 つ）も読む。"""
+    outs = action.get("outputs")
+    if outs is None and action.get("output"):
+        outs = [action["output"]]
+    return [o for o in outs or [] if isinstance(o, dict) and o.get("id")]
+
+
 class SoundNotFound(Exception):
     """指定されたサウンドが見つからない。"""
 
@@ -53,6 +69,7 @@ class Player:
         self._log = log or (lambda *a, **k: None)
         self._lock = threading.Lock()
         self._proc: subprocess.Popen | None = None
+        self._side: list[subprocess.Popen] = []   # 一緒に鳴っている AirPlay の補助プロセス
         self._job = 0
         # 同じ時刻に複数の予定が来ても打ち消し合わないよう、順番待ちに並べる
         self._queue: deque[tuple[dict, dict, str, str]] = deque()
@@ -245,17 +262,20 @@ class Player:
         """いま鳴っているものだけを止める（順番待ちはそのまま）。"""
         with self._lock:
             self._job += 1
-            proc, self._proc = self._proc, None
-        if proc and proc.poll() is None:
-            self._signal_group(proc, signal.SIGTERM)
-            try:
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self._signal_group(proc, signal.SIGKILL)
+            procs = [p for p in [self._proc, *self._side] if p]
+            self._proc = None
+            self._side = []
+        for proc in procs:
+            if proc.poll() is None:
+                self._signal_group(proc, signal.SIGTERM)
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self._signal_group(proc, signal.SIGKILL)
 
     def is_playing(self) -> bool:
         with self._lock:
-            return self._proc is not None and self._proc.poll() is None
+            return any(p.poll() is None for p in [self._proc, *self._side] if p)
 
     def _run(self, argv: list[str], job: int, timeout: float = 600.0) -> bool:
         """1 コマンドを実行する。途中で新しいジョブが来たら False を返す。"""
@@ -475,58 +495,131 @@ class Player:
             return
         self._mark(jid, state="playing", started=self._now())
         started = time.monotonic()
-        output = action.get("output") or None
-        if output and output.get("id"):
-            sent = self._play_airplay(output, volume, items, repeat, job, jid, label)
-            if sent is not None:
-                if sent:
-                    self._mark(jid, state="done", finished=self._now(), output=output.get("name") or output["id"],
-                               seconds=round(time.monotonic() - started, 1),
-                               **({"reason": "、".join(problems)} if problems else {}))
-                self._cleanup(items)
-                return
+        outs = outputs_of(action)
+        devices = [o for o in outs if o["id"] != MAC]
+        mac = not outs or len(devices) < len(outs)     # この Mac でも鳴らすか
+        helper, used = None, []
+        if devices:
+            helper, used, failed = self._start_airplay(devices, volume, items, repeat, job, label)
+            if failed and not mac:
+                mac = True     # つながらない機器があれば、この Mac で代わりに鳴らす
+                self._mark(jid, fallback=True,
+                           note=f"「{'・'.join(failed)}」で鳴らせなかったので、この Mac で鳴らしました")
+            if helper and mac:
+                time.sleep(AIRPLAY_DELAY)   # AirPlay は遅れて鳴り始めるので、この Mac もそれに合わせる
+        result = self._play_local(items, repeat, job) if mac else None
+        if helper:
+            stopped = self._wait_airplay(helper, job)
+            if stopped and result is None:
+                result = "stopped"
+        if result == "stopped":
+            self._mark(jid, state="stopped", finished=self._now(),
+                       reason="止めました（停止ボタンか、次の再生に替わりました）")
+            return
+        if result and result.startswith("failed:"):
+            self._mark(jid, state="failed", finished=self._now(), reason=result[7:])
+            return
+        if mac:
+            used.append("この Mac")
+        self._mark(jid, state="done", finished=self._now(), seconds=round(time.monotonic() - started, 1),
+                   **({"output": "・".join(used)} if devices else {}),
+                   **({"reason": "、".join(problems)} if problems else {}))
+        self._cleanup(items)
+
+    def _play_local(self, items: list[list[str]], repeat: int, job: int) -> str | None:
+        """この Mac（afplay）で鳴らす。最後まで鳴らせたら None、止められたら "stopped"、失敗は "failed:理由"。"""
         for r in range(repeat):
             if r:
                 time.sleep(0.45)
                 with self._lock:
                     if job != self._job:
-                        self._mark(jid, state="stopped", reason="次の再生に替わりました", finished=self._now())
-                        return
+                        return "stopped"
             for argv in items:
                 if not self._run(argv, job):
-                    self._mark(jid, state="stopped", finished=self._now(),
-                               reason="止めました（停止ボタンか、次の再生に替わりました）")
-                    return
+                    return "stopped"
                 if getattr(self, "_last_rc", 0) not in (0,):
-                    self._mark(jid, state="failed", finished=self._now(),
-                               reason=f"afplay が失敗しました（終了コード {self._last_rc}）"
-                                      + (f": {self._last_err}" if self._last_err else ""))
-                    return
-        self._mark(jid, state="done", finished=self._now(),
-                   seconds=round(time.monotonic() - started, 1),
-                   **({"reason": "、".join(problems)} if problems else {}))
-        self._cleanup(items)
-
-    def _play_airplay(self, output: dict, volume: float, items: list[list[str]], repeat: int,
-                      job: int, jid: str | None, label: str) -> bool | None:
-        """AirPlay の機器で鳴らす。鳴らし終えたら True、止められたら False、
-        送れなかったら None（呼び出し側がこの Mac で代わりに鳴らす）。"""
-        name = output.get("name") or output["id"]
-        if not (self.airplay and self.airplay.available()):
-            self._log("error", f"{label}: AirPlay の部品が無いので、「{name}」ではなくこの Mac で鳴らします")
-            self._mark(jid, fallback=True, note=f"「{name}」で鳴らせなかったので、この Mac で鳴らしました")
-            return None
-        files = [argv[-1] for argv in items] * repeat
-        if not self._run(self.airplay.argv(output, volume, files), job, timeout=900):
-            self._mark(jid, state="stopped", finished=self._now(),
-                       reason="止めました（停止ボタンか、次の再生に替わりました）")
-            return False
-        if getattr(self, "_last_rc", 0) == 0:
-            return True
-        self._log("error", f"{label}: AirPlay「{name}」で鳴らせなかったので、この Mac で鳴らします"
-                           + (f"（{self._last_err}）" if self._last_err else ""))
-        self._mark(jid, fallback=True, note=f"「{name}」で鳴らせなかったので、この Mac で鳴らしました")
+                    return (f"failed:afplay が失敗しました（終了コード {self._last_rc}）"
+                            + (f": {self._last_err}" if self._last_err else ""))
         return None
+
+    def _start_airplay(self, devices: list[dict], volume: float, items: list[list[str]], repeat: int,
+                       job: int, label: str):
+        """AirPlay の機器へ送り始める。(補助プロセス or None, つながった機器名, つながらなかった機器名) を返す。
+
+        補助スクリプトは、つなぎ終えたところで {"connected": [...], "failed": [...]} を 1 行出してから鳴らす。
+        """
+        names = {d["id"]: d.get("name") or d["id"] for d in devices}
+        if not (self.airplay and self.airplay.available()):
+            self._log("error", f"{label}: AirPlay の部品が無いので、この Mac で鳴らします")
+            return None, [], list(names.values())
+        files = [argv[-1] for argv in items] * repeat
+        try:
+            proc = subprocess.Popen(self.airplay.argv(devices, volume, files), stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, start_new_session=True)
+        except OSError as exc:
+            self._log("error", f"{label}: AirPlay で鳴らせませんでした: {exc}")
+            return None, [], list(names.values())
+        with self._lock:
+            if job != self._job:
+                self._signal_group(proc, signal.SIGTERM)
+                proc.communicate()
+                return None, [], []
+            self._side.append(proc)
+        line = b""
+        if select.select([proc.stdout], [], [], AIRPLAY_CONNECT_TIMEOUT)[0]:
+            line = proc.stdout.readline()
+        try:
+            res = json.loads(line or b"{}")
+        except ValueError:
+            res = {}
+        ok = [names.get(i, i) for i in res.get("connected") or []]
+        failed = [n for i, n in names.items() if n not in ok]
+        if failed:
+            err = ""
+            if not ok:   # どれにもつながらなかった。補助プロセスはもう終わる
+                self._forget(proc)
+                try:
+                    _out, e = proc.communicate(timeout=5)
+                    err = e.decode("utf-8", "replace").strip()[:200]
+                except subprocess.TimeoutExpired:
+                    self._signal_group(proc, signal.SIGKILL)
+                    proc.communicate()
+            self._log("error", f"{label}: AirPlay「{'・'.join(failed)}」で鳴らせませんでした"
+                               + (f"（{err}）" if err else ""))
+            if not ok:
+                return None, [], failed
+        return proc, ok, failed
+
+    def _wait_airplay(self, proc: subprocess.Popen, job: int) -> bool:
+        """AirPlay の補助プロセスが終わるのを待つ。途中で止められたら True。"""
+        err = b""
+        try:
+            while True:
+                with self._lock:
+                    if job != self._job:
+                        break
+                try:
+                    _out, err = proc.communicate(timeout=0.2)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+        finally:
+            self._forget(proc)
+        if proc.poll() is None:   # 止められた（停止ボタン・次の再生）
+            self._signal_group(proc, signal.SIGTERM)
+            proc.communicate()
+            return True
+        with self._lock:
+            if job != self._job:
+                return True
+        if proc.returncode != 0 and err:
+            self._log("error", f"AirPlay の再生でエラー: {err.decode('utf-8', 'replace').strip()[:200]}")
+        return False
+
+    def _forget(self, proc: subprocess.Popen) -> None:
+        with self._lock:
+            if proc in self._side:
+                self._side.remove(proc)
 
     def _cleanup(self, items: list[list[str]]) -> None:
         # say の一時ファイルを片付ける

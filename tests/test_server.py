@@ -465,7 +465,7 @@ class TestSkipAndMute(ServerCase):
 class TestAirPlayRoute(ServerCase):
     def test_not_installed(self):
         self.assertEqual(self.ok("GET", "/api/airplay"), {"available": False, "devices": []})
-        self.err("POST", "/api/preview", {"type": "sound", "sound": "builtin:ding", "output": {"x": 1}})
+        self.err("POST", "/api/preview", {"type": "sound", "sound": "builtin:ding", "outputs": [{"x": 1}]})
 
 
 class TestPreviewAndStop(ServerCase):

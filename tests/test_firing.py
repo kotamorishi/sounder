@@ -286,13 +286,19 @@ class TestSkipDates(Base):
 
 
 class TestOutput(Base):
-    def test_output_goes_with_main_and_lead(self):
-        out = {"id": "ABC", "name": "Bedroom", "address": "192.0.2.1"}
-        s = self.add(name="起床", output=out, lead_times=[5])
-        self.assertEqual(s["output"], out)
+    def test_outputs_go_with_main_and_lead(self):
+        bed = {"id": "ABC", "name": "Bedroom", "address": "192.0.2.1"}
+        mac = {"id": "mac", "name": "この Mac", "address": ""}
+        s = self.add(name="起床", outputs=[bed, mac, bed], lead_times=[5])
+        self.assertEqual(s["outputs"], [bed, mac])     # 同じ機器は 1 つに
         for tag, lead in (("main", 0), ("lead", 5)):
-            self.assertEqual(self.sched.action_for(s, tag, lead, self.store.settings)["output"], out)
-        self.assertIsNone(self.add(name="ふつう")["output"])
-        self.assertNotIn("output", self.sched.action_for(self.add(name="x"), "main", 0, {}))
+            self.assertEqual(self.sched.action_for(s, tag, lead, self.store.settings)["outputs"], [bed, mac])
+        self.assertEqual(self.add(name="ふつう")["outputs"], [])
+        self.assertEqual(self.add(name="Mac だけ", outputs=[mac])["outputs"], [])
+        self.assertNotIn("outputs", self.sched.action_for(self.add(name="x"), "main", 0, {}))
         with self.assertRaises(config.ValidationError):
-            self.add(output={"name": "id が無い"})
+            self.add(outputs=[{"name": "id が無い"}])
+
+    def test_old_single_output_is_migrated(self):
+        bed = {"id": "ABC", "name": "Bedroom", "address": ""}
+        self.assertEqual(self.add(name="起床", output=bed)["outputs"], [bed])

@@ -349,7 +349,7 @@ function alarmRow(s) {
   const detailParts = whatParts(s.action);
   if (s.lead_times && s.lead_times.length) detailParts.push(` · ${SL.leadLabel(s.lead_times)}に予告`);
   if (s.outing) detailParts.push(' · 天気と服装も');
-  if (s.output) detailParts.push(` · ${outputLabel(s.output)}で鳴らす`);
+  if ((s.outputs || []).length) detailParts.push(` · ${outputLabel(s.outputs)}で鳴らす`);
   const skipped = (s.skip_dates || []).filter((d) => d >= SL.isoDate(new Date()));
   if (skipped.length) {
     detailParts.push(` · ${skipped.slice(0, 2).map((d) => SL.onceLabel(d)).join('・')}${skipped.length > 2 ? ` ほか${skipped.length - 2}日` : ''}は鳴らさない`);
@@ -1814,16 +1814,40 @@ async function loadAirplay(refresh) {
 
 function renderOutput() {
   const devices = (airplay && airplay.devices) || [];
-  const cur = draft.output && draft.output.id;
-  $('#f-output-block').hidden = !((airplay && airplay.available) || cur);
-  const opts = [{ value: '', label: 'この Mac' }]
-    .concat(devices.map((d) => ({ value: d.id, label: d.name })));
-  if (cur && !devices.some((d) => d.id === cur)) opts.push({ value: cur, label: `${draft.output.name || cur}（見つかっていません）` });
-  fillSelect($('#f-output'), opts, cur || '');
-  $('#f-output').value = cur || '';
+  const outs = draft.outputs || [];
+  $('#f-output-block').hidden = !((airplay && airplay.available) || outs.length);
+  const chosen = new Set(outs.length ? outs.map((o) => o.id) : ['mac']);
+  const places = [{ id: 'mac', name: 'この Mac' }].concat(devices);
+  for (const o of outs) {
+    if (!places.some((p) => p.id === o.id)) places.push({ ...o, missing: true });
+  }
+  const box = $('#f-outputs');
+  box.textContent = '';
+  for (const p of places) {
+    const c = el('div', 'cell');
+    const lid = `f-out-${p.id}`;
+    const label = el('span', 'cell-label', p.missing ? `${p.name || p.id}（見つかっていません）` : p.name);
+    label.id = lid;
+    const sw = el('button', 'switch');
+    sw.type = 'button';
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-labelledby', lid);
+    setSwitch(sw, chosen.has(p.id));
+    sw.addEventListener('click', () => {
+      if (chosen.has(p.id)) chosen.delete(p.id); else chosen.add(p.id);
+      if (!chosen.size) { chosen.add('mac'); toast('どこにも鳴らさないことはできないので、この Mac にしました'); }
+      draft.outputs = [...chosen].filter((id) => !(chosen.size === 1 && id === 'mac')).map((id) => {
+        const d = places.find((x) => x.id === id) || {};
+        return { id, name: d.name || id, address: d.address || '' };
+      });
+      renderOutput();
+    });
+    c.append(label, sw);
+    box.append(c);
+  }
 }
 
-function outputLabel(o) { return o && o.id ? o.name || o.id : ''; }
+function outputLabel(outs) { return (outs || []).map((o) => o.name || o.id).join('・'); }
 
 function renderEditorValues() {
   $$('#editor [data-kind-for]').forEach((e) => {
@@ -2052,7 +2076,7 @@ function collect() {
     lead_times: draft.lead_times,
     skip: kind === 'once' ? [] : draft.skip,
     outing: !!draft.outing,
-    output: draft.output && draft.output.id ? draft.output : null,
+    outputs: draft.outputs || [],
     action: {
       type,
       sound: a.sound,
@@ -2127,8 +2151,8 @@ function previewMain() {
   const a = draft.action;
   api('POST', '/api/preview', {
     type, sound: a.sound, text: (a.text || '').trim() || '読み上げの見本です', voice: a.voice,
-    rate: Number(a.rate), volume: Number(a.volume), output: draft.output || null,
-  }).then(() => toast(draft.output ? `${outputLabel(draft.output)} で再生しました` : '再生しました')).catch(fail);
+    rate: Number(a.rate), volume: Number(a.volume), outputs: draft.outputs || [],
+  }).then(() => toast((draft.outputs || []).length ? `${outputLabel(draft.outputs)} で再生しました` : '再生しました')).catch(fail);
 }
 
 function previewLead() {
@@ -2521,11 +2545,6 @@ function wire() {
     if (draft.lead_action.speak_remaining) previewLead();
   });
   $('#f-lead-test').addEventListener('click', previewLead);
-  $('#f-output').addEventListener('change', (e) => {
-    const id = e.target.value;
-    const d = ((airplay && airplay.devices) || []).find((x) => x.id === id);
-    draft.output = !id ? null : d ? { id: d.id, name: d.name, address: d.address } : draft.output;
-  });
   $('#f-output-scan').addEventListener('click', () => loadAirplay(true));
   $('#f-outing').addEventListener('click', () => {
     draft.outing = !draft.outing;

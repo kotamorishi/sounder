@@ -3,7 +3,7 @@
 pyatv は標準ライブラリではないので、別の Python 環境（.venv-airplay、scripts/install-airplay.sh）に入れ、
 補助スクリプト airplay/airplay_send.py をプロセスとして呼ぶ。入っていなければ「この Mac」だけが選べる。
 
-予定の output（{"id", "name", "address"}）に機器を入れると、再生層（player.py）がこれで送る。
+予定の outputs（[{"id", "name", "address"}, ...]。"mac" はこの Mac）に機器を入れると、再生層（player.py）がこれで送る。
 つながらなければ、これまでどおりこの Mac で鳴らす。
 """
 
@@ -54,13 +54,13 @@ class AirPlay:
             self._scanned = time.monotonic()
             return list(self._devices)
 
-    def argv(self, output: dict, volume: float | None, files: list[str]) -> list[str]:
-        """files を順に output の機器で鳴らすコマンド。"""
+    def argv(self, outputs: list[dict], volume: float | None, files: list[str]) -> list[str]:
+        """files を outputs の機器すべてで一斉に鳴らすコマンド。"""
         known = {d["id"]: d for d in self._devices}
-        address = (known.get(output["id"]) or {}).get("address") or output.get("address") or ""
-        argv = [str(self.python), str(self.script), "play", "--id", output["id"]]
-        if address:
-            argv += ["--address", address]
+        argv = [str(self.python), str(self.script), "play"]
+        for o in outputs:
+            address = (known.get(o["id"]) or {}).get("address") or o.get("address") or ""
+            argv += ["--device", f"{o['id']}@{address}" if address else o["id"]]
         if volume is not None:
             argv += ["--volume", f"{float(volume):.3f}"]
         return argv + ["--"] + [str(f) for f in files]

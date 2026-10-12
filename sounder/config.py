@@ -108,13 +108,20 @@ def _check_real_date(month: int, day: int) -> None:
         raise ValidationError(f"{month}月{day}日は存在しません")
 
 
-def _output(value: Any) -> dict[str, str] | None:
+def _outputs(value: Any) -> list[dict[str, str]]:
     if not value:
-        return None
-    if not isinstance(value, dict) or not isinstance(value.get("id"), str) or not value["id"].strip():
+        return []
+    if not isinstance(value, list) or len(value) > 12:
         raise ValidationError("鳴らす場所の指定が不正です")
-    return {"id": value["id"].strip()[:64], "name": str(value.get("name") or "").strip()[:80],
-            "address": str(value.get("address") or "").strip()[:64]}
+    out: dict[str, dict[str, str]] = {}
+    for o in value:
+        if not isinstance(o, dict) or not isinstance(o.get("id"), str) or not o["id"].strip():
+            raise ValidationError("鳴らす場所の指定が不正です")
+        oid = o["id"].strip()[:64]
+        out[oid] = {"id": oid, "name": str(o.get("name") or "").strip()[:80],
+                    "address": str(o.get("address") or "").strip()[:64]}
+    # この Mac だけなら空（既定）と同じ
+    return [] if list(out) == ["mac"] else list(out.values())
 
 
 def _ids(value: Any, label: str) -> list[str]:
@@ -174,8 +181,8 @@ def validate_schedule(raw: Any, *, keep_id: str | None = None) -> dict[str, Any]
     # お出かけ参考情報: 読み上げに、その時刻からの天気と服装を足す
     s["outing"] = bool(raw.get("outing", False))
 
-    # 鳴らす場所。None ならこの Mac、{"id", "name", "address"} なら AirPlay の機器（HomePod など）
-    s["output"] = _output(raw.get("output"))
+    # 鳴らす場所。空ならこの Mac。[{"id", "name", "address"}, ...]（id "mac" はこの Mac、ほかは AirPlay の機器）
+    s["outputs"] = _outputs(raw.get("outputs", [raw["output"]] if raw.get("output") else []))
 
     # お休みの日（祝日・学校の休校日）は鳴らさない
     skip = raw.get("skip") or []

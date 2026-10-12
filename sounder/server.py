@@ -522,7 +522,7 @@ class Handler(BaseHTTPRequestHandler):
                 "rate": body.get("rate"),
                 "volume": body.get("volume", app.store.settings["default_volume"]),
                 "repeat": 1,
-                "output": config_mod._output(body.get("output")),   # 鳴らす場所（AirPlay）
+                "outputs": config_mod._outputs(body.get("outputs")),   # 鳴らす場所（AirPlay など）
             }
             if action["type"] in ("sound", "both") and not action.get("sound"):
                 raise ValidationError("サウンドを選んでください")

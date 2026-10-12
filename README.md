@@ -36,7 +36,7 @@ git clone https://github.com/kotamorishi/sounder.git && cd sounder
 | 自然な声 | Qwen3-TTS（日本語・英語、アナウンサー風、言葉で説明して声を作る） | Apple Silicon・約 4〜11GB |
 | 日本語の声を増やす | AivisSpeech（AivisHub の声を追加できる） | AivisSpeech.app |
 | カレンダー連携 | Mac のカレンダー（iCloud の共有カレンダーも）の予定を N 分前に読み上げ | Xcode か Command Line Tools |
-| 鳴らす場所 | 予定ごとに HomePod など AirPlay の機器で鳴らす（つながらなければこの Mac で） | `scripts/install-airplay.sh`（uv） |
+| 鳴らす場所 | 予定ごとに HomePod など AirPlay の機器（いくつでも・この Mac と一緒にも）で鳴らす（つながらなければこの Mac で） | `scripts/install-airplay.sh`（uv） |
 | 効果音 | 効果音ラボの約 1,400 種を各自の Mac に取り込み | ネット接続（取り込み時のみ） |
 | 天気 | 朝のお知らせに今日の天気（WeatherKit）。雨の時間帯なら傘をすすめる | Apple Developer Program・Xcode |
 | AI（オプション） | 朝に今日の予定をまとめて読み上げ（祝日・休校日にも触れる）。手元の OpenAI 互換の API（vLLM・Ollama など）か Claude API | 手元の AI サーバか Claude API キー |

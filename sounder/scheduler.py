@@ -474,8 +474,8 @@ class Scheduler:
                           "voice": action.get("voice") or settings.get("default_voice"),
                           "rate": settings.get("speak_rate", 180),
                           "volume": action.get("volume", settings.get("default_volume")), "repeat": 1}
-        if sched.get("output"):
-            action = {**action, "output": sched["output"]}   # 鳴らす場所（AirPlay）。予告も同じ場所で
+        if sched.get("outputs"):
+            action = {**action, "outputs": sched["outputs"]}   # 鳴らす場所（AirPlay など）。予告も同じ場所で
         if sched.get("outing") and self.weather:
             # 出かける時刻（予告なら本番の時刻）からの天気と服装を、読み上げのあとに足す
             when = when or datetime.now()

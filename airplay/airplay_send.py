@@ -2,9 +2,10 @@
 
     airplay_send.py scan
         → 標準出力に JSON: [{"id", "name", "model", "address"}, ...]
-    airplay_send.py play --id ID [--address ADDR] [--volume 0〜1] ファイル...
-        → ファイルを順に鳴らし、鳴り終わったら終了コード 0
-          終了コード 2 = 機器が見つからない・つながらない（何も鳴っていない）。sounder はこの Mac で代わりに鳴らす
+    airplay_send.py play --device ID[@ADDR] [--device ...] [--volume 0〜1] -- ファイル...
+        → すべての機器につないだところで標準出力に 1 行 {"connected": [id...], "failed": [id...]} を出し、
+          つながった機器で一斉にファイルを順に鳴らす。鳴り終わったら終了コード 0
+          終了コード 2 = どの機器にもつながらない（何も鳴っていない）。sounder はこの Mac で代わりに鳴らす
 
 sounder 本体は標準ライブラリだけで動かすため、pyatv はこの別プロセスに閉じ込める。
 """
@@ -44,31 +45,45 @@ async def find(ident: str, address: str | None):
     return found[0] if found else None
 
 
-async def play(ident: str, address: str | None, volume: float | None, files: list[str]) -> int:
+async def connect(ident: str, address: str | None, volume: float | None):
     conf = await find(ident, address)
     if conf is None:
         print(f"AirPlay の機器が見つかりません: {ident}", file=sys.stderr)
-        return NOT_FOUND
+        return None
     try:
         atv = await pyatv.connect(conf, asyncio.get_running_loop())
     except Exception as exc:  # noqa: BLE001
-        print(f"つながりませんでした: {exc!r}", file=sys.stderr)
-        return NOT_FOUND
+        print(f"つながりませんでした: {conf.name}: {exc!r}", file=sys.stderr)
+        return None
+    if volume is not None:
+        try:
+            await atv.audio.set_volume(max(0.0, min(100.0, volume * 100)))
+        except Exception:  # noqa: BLE001  音量を変えられない機器でも鳴らす
+            pass
+    return atv
+
+
+async def stream(atv, files: list[str]) -> bool:
     try:
-        if volume is not None:
-            try:
-                await atv.audio.set_volume(max(0.0, min(100.0, volume * 100)))
-            except Exception:  # noqa: BLE001  音量を変えられない機器でも鳴らす
-                pass
-        for i, f in enumerate(files):
-            try:
-                await atv.stream.stream_file(f)
-            except Exception as exc:  # noqa: BLE001
-                print(f"送れませんでした: {exc!r}", file=sys.stderr)
-                return NOT_FOUND if i == 0 else 1
+        for f in files:
+            await atv.stream.stream_file(f)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"送れませんでした: {exc!r}", file=sys.stderr)
+        return False
     finally:
         atv.close()
-    return 0
+
+
+async def play(devices: list[tuple[str, str | None]], volume: float | None, files: list[str]) -> int:
+    atvs = await asyncio.gather(*(connect(i, a, volume) for i, a in devices))
+    ok = [(ident, atv) for (ident, _a), atv in zip(devices, atvs) if atv]
+    print(json.dumps({"connected": [i for i, _ in ok],
+                      "failed": [i for (i, _a), atv in zip(devices, atvs) if not atv]}), flush=True)
+    if not ok:
+        return NOT_FOUND
+    done = await asyncio.gather(*(stream(atv, files) for _i, atv in ok))
+    return 0 if all(done) else 1
 
 
 def main() -> int:
@@ -77,15 +92,15 @@ def main() -> int:
     s = sub.add_parser("scan")
     s.add_argument("--timeout", type=int, default=4)
     p = sub.add_parser("play")
-    p.add_argument("--id", required=True)
-    p.add_argument("--address")
+    p.add_argument("--device", action="append", required=True, help="ID か ID@アドレス")
     p.add_argument("--volume", type=float)
     p.add_argument("files", nargs="+")
     a = ap.parse_args()
     if a.cmd == "scan":
         print(json.dumps(asyncio.run(scan(a.timeout)), ensure_ascii=False))
         return 0
-    return asyncio.run(play(a.id, a.address, a.volume, a.files))
+    devices = [(d.split("@", 1)[0], (d.split("@", 1)[1:] or [None])[0]) for d in a.device]
+    return asyncio.run(play(devices, a.volume, a.files))
 
 
 if __name__ == "__main__":
