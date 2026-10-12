@@ -191,6 +191,20 @@ Claude API を使う場合は「使う AI」を Claude API にして API キー�
 `fallbacks: "default"` と effort `low` で呼ぶ。標準ライブラリの urllib で直接呼び、python.org 版 Python のために
 `/etc/ssl/cert.pem` で証明書を確かめる）。API キーは `data/config.json` にだけ保存し、`/api/state` などには返さない。
 
+## 7c. AirPlay で鳴らす（任意・HomePod など）
+
+予定ごとに「鳴らす場所」を選べるようにする。pyatv を別の Python 環境に入れ、鳴らすたびに `airplay/airplay_send.py` を呼ぶ（常駐しない）。
+
+```sh
+brew install uv                 # uv が無ければ
+scripts/install-airplay.sh      # .venv-airplay/ を作り、見つかった機器を出す。本体の再起動は不要
+```
+
+- 確認: `.venv-airplay/bin/python airplay/airplay_send.py scan` に HomePod が並ぶ。`GET /api/airplay`（`?refresh=1` で探し直す）。
+- 👤 画面の予定の編集 →「鳴らす場所」で機器を選ぶ。予定の `output`（`{"id","name","address"}`）に入り、本番も予告もそこで鳴る。
+- 音量は予定の音量をその機器の音量として送る。鳴り始めは 2〜3 秒遅れる。その機器で音楽を流していると止まる。
+- つながらない・部品が無いときは、この Mac（afplay）で代わりに鳴らす（再生の記録に `fallback`）。
+
 ## 8. 運用
 
 ```sh

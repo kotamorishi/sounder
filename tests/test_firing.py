@@ -283,3 +283,16 @@ class TestSkipDates(Base):
         self.sched.tick(datetime(2026, 9, 21, 0, 0, 5))
         self.assertEqual(self.store.get(s["id"])["skip_dates"], ["2026-09-21", "2026-09-30"])
         self.assertEqual(self.store.settings["calendar"]["muted"], ["b|2026-09-21T10:00:00-04:00"])
+
+
+class TestOutput(Base):
+    def test_output_goes_with_main_and_lead(self):
+        out = {"id": "ABC", "name": "Bedroom", "address": "192.0.2.1"}
+        s = self.add(name="起床", output=out, lead_times=[5])
+        self.assertEqual(s["output"], out)
+        for tag, lead in (("main", 0), ("lead", 5)):
+            self.assertEqual(self.sched.action_for(s, tag, lead, self.store.settings)["output"], out)
+        self.assertIsNone(self.add(name="ふつう")["output"])
+        self.assertNotIn("output", self.sched.action_for(self.add(name="x"), "main", 0, {}))
+        with self.assertRaises(config.ValidationError):
+            self.add(output={"name": "id が無い"})

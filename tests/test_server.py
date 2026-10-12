@@ -23,6 +23,7 @@ os.environ["SOUNDER_TTS_URL"] = "http://127.0.0.1:9"
 os.environ["SOUNDER_AIVIS_URL"] = "http://127.0.0.1:9"
 os.environ["SOUNDER_MANAGE_TTS"] = "0"
 os.environ["SOUNDER_WEATHER_APP"] = "/nonexistent/SounderWeather"
+os.environ["SOUNDER_AIRPLAY_PYTHON"] = "/nonexistent/python"
 
 from sounder import server as server_mod  # noqa: E402
 
@@ -459,6 +460,12 @@ class TestSkipAndMute(ServerCase):
         self.ok("PATCH", "/api/settings", {"calendar": {"lead": 5}})
         self.assertEqual(self.app.store.settings["calendar"]["muted_series"], ["abc"])
         self.err("POST", "/api/calendar/mute", {"event": ev, "scope": "all"})
+
+
+class TestAirPlayRoute(ServerCase):
+    def test_not_installed(self):
+        self.assertEqual(self.ok("GET", "/api/airplay"), {"available": False, "devices": []})
+        self.err("POST", "/api/preview", {"type": "sound", "sound": "builtin:ding", "output": {"x": 1}})
 
 
 class TestPreviewAndStop(ServerCase):

@@ -349,6 +349,7 @@ function alarmRow(s) {
   const detailParts = whatParts(s.action);
   if (s.lead_times && s.lead_times.length) detailParts.push(` · ${SL.leadLabel(s.lead_times)}に予告`);
   if (s.outing) detailParts.push(' · 天気と服装も');
+  if (s.output) detailParts.push(` · ${outputLabel(s.output)}で鳴らす`);
   const skipped = (s.skip_dates || []).filter((d) => d >= SL.isoDate(new Date()));
   if (skipped.length) {
     detailParts.push(` · ${skipped.slice(0, 2).map((d) => SL.onceLabel(d)).join('・')}${skipped.length > 2 ? ` ほか${skipped.length - 2}日` : ''}は鳴らさない`);
@@ -1790,8 +1791,39 @@ function fillEditor() {
   setSwitch($('#f-lead-speak'), !!draft.lead_action.speak_remaining);
   setSwitch($('#f-outing'), !!draft.outing);
   $('#f-outing-block').hidden = !(state.weather && state.weather.installed);
+  renderOutput();
+  loadAirplay(false);
   renderEditorValues();
 }
+
+// AirPlay の機器（鳴らす場所）。null = まだ聞いていない
+let airplay = null;
+
+async function loadAirplay(refresh) {
+  if (airplay && !refresh) return;
+  const btn = $('#f-output-scan');
+  if (refresh) { btn.disabled = true; btn.textContent = '探しています…'; }
+  try {
+    airplay = await api('GET', `/api/airplay${refresh ? '?refresh=1' : ''}`);
+    if (draft) renderOutput();
+    if (refresh) toast(`${airplay.devices.length} 台見つかりました`);
+  } catch (e) { fail(e); }
+  btn.disabled = false;
+  btn.textContent = 'AirPlay の機器を探し直す';
+}
+
+function renderOutput() {
+  const devices = (airplay && airplay.devices) || [];
+  const cur = draft.output && draft.output.id;
+  $('#f-output-block').hidden = !((airplay && airplay.available) || cur);
+  const opts = [{ value: '', label: 'この Mac' }]
+    .concat(devices.map((d) => ({ value: d.id, label: d.name })));
+  if (cur && !devices.some((d) => d.id === cur)) opts.push({ value: cur, label: `${draft.output.name || cur}（見つかっていません）` });
+  fillSelect($('#f-output'), opts, cur || '');
+  $('#f-output').value = cur || '';
+}
+
+function outputLabel(o) { return o && o.id ? o.name || o.id : ''; }
 
 function renderEditorValues() {
   $$('#editor [data-kind-for]').forEach((e) => {
@@ -2020,6 +2052,7 @@ function collect() {
     lead_times: draft.lead_times,
     skip: kind === 'once' ? [] : draft.skip,
     outing: !!draft.outing,
+    output: draft.output && draft.output.id ? draft.output : null,
     action: {
       type,
       sound: a.sound,
@@ -2094,8 +2127,8 @@ function previewMain() {
   const a = draft.action;
   api('POST', '/api/preview', {
     type, sound: a.sound, text: (a.text || '').trim() || '読み上げの見本です', voice: a.voice,
-    rate: Number(a.rate), volume: Number(a.volume),
-  }).then(() => toast('再生しました')).catch(fail);
+    rate: Number(a.rate), volume: Number(a.volume), output: draft.output || null,
+  }).then(() => toast(draft.output ? `${outputLabel(draft.output)} で再生しました` : '再生しました')).catch(fail);
 }
 
 function previewLead() {
@@ -2488,6 +2521,12 @@ function wire() {
     if (draft.lead_action.speak_remaining) previewLead();
   });
   $('#f-lead-test').addEventListener('click', previewLead);
+  $('#f-output').addEventListener('change', (e) => {
+    const id = e.target.value;
+    const d = ((airplay && airplay.devices) || []).find((x) => x.id === id);
+    draft.output = !id ? null : d ? { id: d.id, name: d.name, address: d.address } : draft.output;
+  });
+  $('#f-output-scan').addEventListener('click', () => loadAirplay(true));
   $('#f-outing').addEventListener('click', () => {
     draft.outing = !draft.outing;
     setSwitch($('#f-outing'), draft.outing);

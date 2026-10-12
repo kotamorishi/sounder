@@ -45,7 +45,7 @@ class Player:
 
     def __init__(self, builtin_dir: Path, user_dir: Path, *, log=None,
                  tts: list | None = None, speech_cache: SpeechCache | None = None,
-                 effects_dir: Path | None = None) -> None:
+                 effects_dir: Path | None = None, airplay=None) -> None:
         self.builtin_dir = builtin_dir
         # 効果音ラボから取ってきた音（python3 -m sounder.effects）。sounds/effects/<分類>/
         self.effects_dir = effects_dir or builtin_dir.parent / "effects"
@@ -66,6 +66,8 @@ class Player:
         self.tts = list(tts or [])
         # say で作った読み上げも取っておく（無ければ毎回作って消す）
         self.speech_cache = speech_cache
+        # AirPlay（HomePod など）で鳴らす（airplay.AirPlay）。action["output"] があればこれで送る
+        self.airplay = airplay
 
     # --- サウンドの解決 ---------------------------------------------------
 
@@ -473,6 +475,16 @@ class Player:
             return
         self._mark(jid, state="playing", started=self._now())
         started = time.monotonic()
+        output = action.get("output") or None
+        if output and output.get("id"):
+            sent = self._play_airplay(output, volume, items, repeat, job, jid, label)
+            if sent is not None:
+                if sent:
+                    self._mark(jid, state="done", finished=self._now(), output=output.get("name") or output["id"],
+                               seconds=round(time.monotonic() - started, 1),
+                               **({"reason": "、".join(problems)} if problems else {}))
+                self._cleanup(items)
+                return
         for r in range(repeat):
             if r:
                 time.sleep(0.45)
@@ -493,6 +505,30 @@ class Player:
         self._mark(jid, state="done", finished=self._now(),
                    seconds=round(time.monotonic() - started, 1),
                    **({"reason": "、".join(problems)} if problems else {}))
+        self._cleanup(items)
+
+    def _play_airplay(self, output: dict, volume: float, items: list[list[str]], repeat: int,
+                      job: int, jid: str | None, label: str) -> bool | None:
+        """AirPlay の機器で鳴らす。鳴らし終えたら True、止められたら False、
+        送れなかったら None（呼び出し側がこの Mac で代わりに鳴らす）。"""
+        name = output.get("name") or output["id"]
+        if not (self.airplay and self.airplay.available()):
+            self._log("error", f"{label}: AirPlay の部品が無いので、「{name}」ではなくこの Mac で鳴らします")
+            self._mark(jid, fallback=True, note=f"「{name}」で鳴らせなかったので、この Mac で鳴らしました")
+            return None
+        files = [argv[-1] for argv in items] * repeat
+        if not self._run(self.airplay.argv(output, volume, files), job, timeout=900):
+            self._mark(jid, state="stopped", finished=self._now(),
+                       reason="止めました（停止ボタンか、次の再生に替わりました）")
+            return False
+        if getattr(self, "_last_rc", 0) == 0:
+            return True
+        self._log("error", f"{label}: AirPlay「{name}」で鳴らせなかったので、この Mac で鳴らします"
+                           + (f"（{self._last_err}）" if self._last_err else ""))
+        self._mark(jid, fallback=True, note=f"「{name}」で鳴らせなかったので、この Mac で鳴らしました")
+        return None
+
+    def _cleanup(self, items: list[list[str]]) -> None:
         # say の一時ファイルを片付ける
         for argv in items:
             p = Path(argv[-1])

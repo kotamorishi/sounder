@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from . import scheduler as sched_mod
 from . import ai as ai_mod
 from . import calendarfeed, claudetasks, daysoff, neural, tones
+from . import airplay as airplay_mod
 from . import weather as weather_mod
 from . import config as config_mod
 from .config import Store, ValidationError
@@ -70,8 +71,11 @@ class App:
             neural.AivisTTS(cache, log=self.log,
                             url=os.environ.get("SOUNDER_AIVIS_URL", neural.AIVIS_URL)),
         ]
+        # SOUNDER_AIRPLAY_PYTHON で AirPlay の Python の場所を変えられる（テストは存在しない場所を渡す）
+        self.airplay = airplay_mod.AirPlay(
+            Path(os.environ.get("SOUNDER_AIRPLAY_PYTHON") or airplay_mod.PYTHON), log=self.log)
         self.player = Player(self.builtin_dir, self.user_dir, log=self.log, tts=tts,
-                             speech_cache=SpeechCache(cache))
+                             speech_cache=SpeechCache(cache), airplay=self.airplay)
         # 保存時にサウンドの存在を確かめる（鳴らす瞬間に気づくのでは遅い）
         self.store = Store(home / "data" / "config.json", sound_check=self.player.resolve)
         self.calendar = calendarfeed.CalendarFeed(home / "data" / "calendar.json")
@@ -387,6 +391,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"settings": public_settings(settings)})
             return
 
+        if parts == ["airplay"] and method == "GET":
+            # 鳴らす場所に選べる AirPlay の機器。refresh=1 で探し直す（数秒かかる）
+            refresh = (query.get("refresh") or ["0"])[0] == "1"
+            self._json({"available": app.airplay.available(),
+                        "devices": app.airplay.devices(refresh=refresh)})
+            return
+
         if parts == ["weather", "locate"] and method == "POST":
             query = (self._json_body().get("query") or "").strip()
             if not query:
@@ -511,6 +522,7 @@ class Handler(BaseHTTPRequestHandler):
                 "rate": body.get("rate"),
                 "volume": body.get("volume", app.store.settings["default_volume"]),
                 "repeat": 1,
+                "output": config_mod._output(body.get("output")),   # 鳴らす場所（AirPlay）
             }
             if action["type"] in ("sound", "both") and not action.get("sound"):
                 raise ValidationError("サウンドを選んでください")

@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+os.environ["SOUNDER_MANAGE_TTS"] = "0"
 
 from sounder import player as player_mod  # noqa: E402
 from sounder import tones  # noqa: E402
@@ -539,3 +540,51 @@ class TestJobs(Base):
         for _ in range(player_mod.JOB_KEEP + 5):
             self.p.play({"type": "sound", "sound": "builtin:ding"}, settings=self.settings, queue=True)
         self.assertLessEqual(len(self.p.jobs(limit=999)), player_mod.JOB_KEEP)
+
+
+class TestAirPlay(Base):
+    """鳴らす場所が AirPlay のとき。補助スクリプトはダミー（終了コードを選べる）。"""
+
+    def setUp(self):
+        super().setUp()
+        from sounder import airplay
+        self.rc = self.home / "rc"
+        script = self.home / "send.py"
+        script.write_text("")
+        py = self._script("airpy", '#!/bin/sh\nprintf \'airplay %s\\n\' "$*" >> "{log}"\nexit $(cat "RC")\n'
+                          .replace("RC", str(self.rc)))
+        self.p.airplay = airplay.AirPlay(Path(py), script)
+
+    def play(self, rc):
+        self.rc.write_text(str(rc))
+        out = {"id": "ABC", "name": "Bedroom", "address": "192.0.2.1"}
+        jid = self.p.play({"type": "sound", "sound": "builtin:ding", "repeat": 2, "output": out},
+                          settings={"default_volume": 0.5}, label="起床")
+        end = time.time() + 5
+        while time.time() < end and self.p.job(jid)["state"] not in ("done", "failed", "stopped"):
+            time.sleep(0.02)
+        return self.p.job(jid)
+
+    def test_sends_files_to_the_device(self):
+        job = self.play(0)
+        self.assertEqual(job["state"], "done")
+        self.assertEqual(job["output"], "Bedroom")
+        (line,) = self.recorded()
+        self.assertIn("play --id ABC --address 192.0.2.1 --volume 0.500 --", line)
+        self.assertEqual(line.count("ding.wav"), 2)   # 繰り返しの分も送る
+
+    def test_falls_back_to_this_mac(self):
+        job = self.play(2)
+        self.assertEqual(job["state"], "done")
+        self.assertTrue(job["fallback"])
+        lines = self.recorded()
+        self.assertTrue(lines[0].startswith("airplay"))
+        self.assertEqual(sum(l.startswith("afplay") for l in lines), 2)
+        self.assertTrue(any("この Mac で鳴らします" in m for _lv, m in self.msgs))
+
+    def test_falls_back_when_not_installed(self):
+        from sounder import airplay
+        self.p.airplay = airplay.AirPlay(self.home / "none", self.home / "none.py")
+        job = self.play(0)
+        self.assertTrue(job["fallback"])
+        self.assertEqual(sum(l.startswith("afplay") for l in self.recorded()), 2)
