@@ -349,6 +349,7 @@ function alarmRow(s) {
   const detailParts = whatParts(s.action);
   if (s.lead_times && s.lead_times.length) detailParts.push(` · ${SL.leadLabel(s.lead_times)}に予告`);
   if (s.outing) detailParts.push(' · 天気と服装も');
+  if (s.until) detailParts.push(` · ${SL.shortHM(s.until)} まで流し続ける`);
   if ((s.outputs || []).length) detailParts.push(` · ${outputLabel(s.outputs)}で鳴らす`);
   const skipped = (s.skip_dates || []).filter((d) => d >= SL.isoDate(new Date()));
   if (skipped.length) {
@@ -846,7 +847,7 @@ function renderTimeline(scroll) {
       (chimeRows[key] ||= []).push(e);
     } else if (e.tag === 'main') {
       // カレンダーの予定は、読み上げの時刻（点）ではなく予定そのものの開始時刻にカードを置く
-      const span = e.source === 'calendar' && (e.starts_at || '').slice(0, 10) === tlDay;
+      const span = (e.source === 'calendar' || e.loop) && (e.starts_at || '').slice(0, 10) === tlDay;
       const endsToday = span && e.ends_at && e.ends_at.slice(0, 10) === tlDay;
       items.push({ min: span ? minOf(e.starts_at) : minOf(e.at), span,
         end: endsToday ? minOf(e.ends_at) : null,
@@ -962,7 +963,7 @@ function tlCard(e, leads, sched) {
   const b = el('button', 'tl-card' + (e.past ? ' is-past' : '') + (muted ? ' is-muted' : ''));
   b.type = 'button';
   const top = el('div', 'tl-card-top');
-  const cal = e.source === 'calendar' && e.starts_at;
+  const cal = (e.source === 'calendar' || e.loop) && e.starts_at;
   top.append(el('span', 't', cal ? `${hmAt(e.starts_at)}–${hmAt(e.ends_at || e.starts_at)}` : hmAt(e.at)),
     el('span', 'n', e.name));
   if (!e.past && !muted) top.append(el('span', 'rel', SL.fmtCountdown(e.at)));
@@ -1785,6 +1786,7 @@ function fillEditor() {
   fillSelect($('#f-dom'), SL.domOptions(), draft.day_of_month);
   fillSelect($('#f-month'), SL.monthOptions(), draft.month);
   $('#f-note').value = draft.note || '';
+  $('#f-until').value = draft.until || '';
   $('#f-volume').value = draft.action.volume ?? 0.6;
   $('#f-text').value = draft.action.text || '';
   $('#f-rate').value = draft.action.rate || 180;
@@ -1862,6 +1864,13 @@ function renderEditorValues() {
   $('#v-speak').textContent = draft._speak ? (draft.action.text || '（文章を入力）') : 'オフ';
   $('#f-vol-out').textContent = SL.volumePct(draft.action.volume);
   setRangeFill($('#f-volume'));
+  const loopable = draft.kind !== 'interval';
+  const looping = loopable && !!draft.until;
+  $('#f-loop-cell').hidden = !loopable;
+  $('#f-until-cell').hidden = !looping;
+  $('#f-loop-note').hidden = !looping;
+  $('#f-repeat-cell').hidden = looping;
+  setSwitch($('#f-loop'), looping);
   $('#f-repeat-out').textContent = `×${draft.action.repeat || 1}`;
   $('#f-repeat-dec').disabled = (draft.action.repeat || 1) <= 1;
   $('#f-repeat-inc').disabled = (draft.action.repeat || 1) >= 10;
@@ -2077,6 +2086,7 @@ function collect() {
     skip: kind === 'once' ? [] : draft.skip,
     outing: !!draft.outing,
     outputs: draft.outputs || [],
+    until: kind !== 'interval' && draft.until ? draft.until : null,
     action: {
       type,
       sound: a.sound,
@@ -2499,6 +2509,22 @@ function wire() {
   // 入力 → 下書き
   $('#f-name').addEventListener('input', (e) => { draft.name = e.target.value; });
   $('#f-note').addEventListener('input', (e) => { draft.note = e.target.value; });
+  $('#f-loop').addEventListener('click', () => {
+    if (draft.until) {
+      draft.until = null;
+    } else {
+      // 既定は 1 時間後まで。読み上げは使えないのでオフにする
+      const [h, m] = (draft.time || '22:00').split(':').map(Number);
+      draft.until = `${SL.pad2((h + 1) % 24)}:${SL.pad2(m)}`;
+      if (draft._speak) { draft._speak = false; draft._sound = true; renderSpeakPage(); }
+    }
+    $('#f-until').value = draft.until || '';
+    renderEditorValues();
+  });
+  $('#f-until').addEventListener('change', (e) => {
+    if (e.target.value) draft.until = e.target.value;
+    renderEditorValues();
+  });
   $('#f-time').addEventListener('change', (e) => {
     if (e.target.value) draft.time = e.target.value;
     renderEditorValues();

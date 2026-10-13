@@ -491,7 +491,7 @@
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 4l13 8-13 8z"/></svg>
               </button>
             </div>
-            <div class="cell">
+            <div class="cell" id="f-repeat-cell">
               <span class="cell-label" id="f-repeat-label">繰り返し回数</span>
               <div class="stepper" role="group" aria-labelledby="f-repeat-label">
                 <button type="button" id="f-repeat-dec" aria-label="回数を減らす">−</button>
@@ -499,7 +499,16 @@
                 <button type="button" id="f-repeat-inc" aria-label="回数を増やす">＋</button>
               </div>
             </div>
+            <div class="cell" id="f-loop-cell">
+              <span class="cell-label" id="f-loop-label">終わりの時刻まで流し続ける</span>
+              <button type="button" class="switch" id="f-loop" role="switch" aria-checked="false" aria-labelledby="f-loop-label"></button>
+            </div>
+            <label class="cell" id="f-until-cell">
+              <span class="cell-label">終わりの時刻</span>
+              <input type="time" class="cell-input" id="f-until">
+            </label>
           </div>
+          <p class="footnote" id="f-loop-note">始まりの時刻から終わりの時刻まで、サウンドを切れ目なく繰り返し流します（読み上げは使えません）。途中で止めたいときは停止ボタンを押してください。その回は鳴らし直しません。</p>
         </div>
 
         <div class="group-block" id="f-output-block" hidden>

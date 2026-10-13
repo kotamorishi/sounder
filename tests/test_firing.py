@@ -302,3 +302,73 @@ class TestOutput(Base):
     def test_old_single_output_is_migrated(self):
         bed = {"id": "ABC", "name": "Bedroom", "address": ""}
         self.assertEqual(self.add(name="起床", output=bed)["outputs"], [bed])
+
+
+class LoopPlayer(FakePlayer):
+    def __init__(self):
+        super().__init__()
+        self.desired = []
+        self.running = set()
+
+    def sync_loops(self, desired):
+        self.desired.append(desired)
+        started = [k for k in desired if k not in self.running]
+        self.running = set(desired)
+        return started
+
+
+class TestUntil(Base):
+    def setUp(self):
+        super().setUp()
+        self.player = LoopPlayer()
+        self.sched = scheduler.Scheduler(self.store, self.player, self.log)
+
+    def run_at(self, t):
+        self.sched._last_tick = t - timedelta(seconds=1)
+        self.sched.tick(t)
+        return self.player.desired[-1]
+
+    def test_loops_during_the_window_only(self):
+        s = self.add(name="ホワイトノイズ", time="22:00", until="23:00", lead_times=[5],
+                     lead_action={"sound": "builtin:ding"})
+        self.assertEqual(self.run_at(datetime(2026, 9, 21, 21, 59)), {})
+        d = self.run_at(datetime(2026, 9, 21, 22, 0))
+        (key, spec), = d.items()
+        self.assertTrue(key.startswith(f"{s['id']}|2026-09-21T22:00:00|"))
+        self.assertEqual(spec["until"], datetime(2026, 9, 21, 23, 0))
+        self.assertEqual(spec["action"]["sound"], "builtin:ding")
+        self.assertTrue(any("23:00 まで繰り返し" in m for _lv, m in self.msgs))
+        # 途中で起動し直しても、残りの時間を鳴らす
+        self.assertEqual(len(self.run_at(datetime(2026, 9, 21, 22, 40))), 1)
+        self.assertEqual(self.run_at(datetime(2026, 9, 21, 23, 0)), {})
+        # 本番はふつうの再生には並べない。予告はふつうに鳴る
+        self.assertEqual([lbl for lbl, _a in self.player.played], [])
+
+    def test_lead_still_fires(self):
+        self.add(name="ノイズ", time="22:00", until="23:00", lead_times=[5],
+                 lead_action={"sound": "builtin:ding"})
+        self.run_at(datetime(2026, 9, 21, 21, 55))
+        self.assertEqual(len(self.player.played), 1)
+
+    def test_crosses_midnight_and_respects_master_switch(self):
+        self.add(name="夜", time="23:30", until="01:00")
+        self.assertEqual(len(self.run_at(datetime(2026, 9, 22, 0, 30))), 1)
+        self.store.update_settings({"master_enabled": False})
+        self.assertEqual(self.run_at(datetime(2026, 9, 22, 0, 31)), {})
+
+    def test_validation(self):
+        with self.assertRaises(config.ValidationError):
+            self.add(until="22:00", time="22:00")
+        with self.assertRaises(config.ValidationError):
+            self.add(until="23:00", time="22:00", action={"type": "speak", "text": "x"})
+        with self.assertRaises(config.ValidationError):
+            self.add(kind="interval", every_minutes=30, until="23:00")
+        s = self.add(until="23:00", time="22:00", outing=True)
+        self.assertFalse(s["outing"])
+        self.assertIsNone(self.add()["until"])
+
+    def test_timeline_span(self):
+        s = self.add(name="ノイズ", time="22:00", until="23:30")
+        (e,) = scheduler.calendar_days([s], datetime(2026, 9, 21).date(), 1, now=datetime(2026, 9, 20))[0]["events"]
+        self.assertEqual((e["starts_at"], e["ends_at"], e["loop"]),
+                         ("2026-09-21T22:00:00", "2026-09-21T23:30:00", True))

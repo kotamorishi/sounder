@@ -9,7 +9,7 @@ import select
 import re
 import uuid
 from collections import OrderedDict, deque
-from datetime import datetime
+from datetime import datetime, timedelta
 import shutil
 import signal
 import subprocess
@@ -38,6 +38,7 @@ MAC = "mac"
 # AirPlay の機器が鳴り始めるまでの遅れ（秒）。この Mac でも一緒に鳴らすときは、これだけ待ってから鳴らす
 AIRPLAY_DELAY = 2.0
 AIRPLAY_CONNECT_TIMEOUT = 20.0
+LOOP_RETRY = 30.0   # 繰り返しが途中で切れたら、何秒後にやり直すか
 
 
 def outputs_of(action: dict) -> list[dict]:
@@ -70,6 +71,11 @@ class Player:
         self._lock = threading.Lock()
         self._proc: subprocess.Popen | None = None
         self._side: list[subprocess.Popen] = []   # 一緒に鳴っている AirPlay の補助プロセス
+        # 「終わりの時刻まで繰り返す」予定の再生（キー → {"stop": Event, "procs": [...], "jid"}）。
+        # ふつうの順番待ちとは別に鳴らす（1 時間鳴っていても、ほかの予定を待たせない）
+        self._loops: dict[str, dict] = {}
+        self._dismissed: set[str] = set()        # 停止ボタンで止めた繰り返し（その回はもう鳴らし直さない）
+        self._retry_at: dict[str, float] = {}     # 途中で切れた繰り返しを、いつやり直すか
         self._job = 0
         # 同じ時刻に複数の予定が来ても打ち消し合わないよう、順番待ちに並べる
         self._queue: deque[tuple[dict, dict, str, str]] = deque()
@@ -254,9 +260,14 @@ class Player:
                 pass
 
     def stop(self) -> None:
-        """鳴っている音を止め、順番待ちも捨てる（画面の停止ボタン）。"""
+        """鳴っている音を止め、順番待ちも捨てる（画面の停止ボタン）。繰り返し中の予定も、その回は止める。"""
         self._cancel_queued()
         self._stop_current()
+        with self._lock:
+            keys = list(self._loops)
+            self._dismissed.update(keys)
+        for key in keys:
+            self._stop_loop(key, "止めました（停止ボタン）")
 
     def _stop_current(self) -> None:
         """いま鳴っているものだけを止める（順番待ちはそのまま）。"""
@@ -275,7 +286,7 @@ class Player:
 
     def is_playing(self) -> bool:
         with self._lock:
-            return any(p.poll() is None for p in [self._proc, *self._side] if p)
+            return bool(self._loops) or any(p.poll() is None for p in [self._proc, *self._side] if p)
 
     def _run(self, argv: list[str], job: int, timeout: float = 600.0) -> bool:
         """1 コマンドを実行する。途中で新しいジョブが来たら False を返す。"""
@@ -615,6 +626,145 @@ class Player:
         if proc.returncode != 0 and err:
             self._log("error", f"AirPlay の再生でエラー: {err.decode('utf-8', 'replace').strip()[:200]}")
         return False
+
+    # --- 終わりの時刻まで繰り返す ---------------------------------------------
+
+    def sync_loops(self, desired: dict[str, dict]) -> list[str]:
+        """いま鳴っているべき繰り返しを渡してもらい、足りないものを始め、要らなくなったものを止める。
+
+        desired: キー → {"action", "settings", "until"(datetime), "label"}。始めたキーを返す。
+        """
+        with self._lock:
+            running = set(self._loops)
+            self._dismissed &= set(desired)       # 時間帯が終わったら、停止ボタンの記憶も消す
+            now = time.monotonic()
+            self._retry_at = {k: v for k, v in self._retry_at.items() if k in desired and v > now}
+            todo = [k for k in desired
+                    if k not in running and k not in self._dismissed and k not in self._retry_at]
+        for key in running - set(desired):
+            self._stop_loop(key, "予定の時間帯が終わったか、予定が変わりました", done=True)
+        for key in todo:
+            self._start_loop(key, desired[key])
+        return todo
+
+    def looping(self) -> list[str]:
+        with self._lock:
+            return list(self._loops)
+
+    def _start_loop(self, key: str, spec: dict) -> None:
+        action, label = spec["action"], spec.get("label", "")
+        jid = uuid.uuid4().hex[:12]
+        entry = {"stop": threading.Event(), "procs": [], "jid": jid}
+        with self._lock:
+            self._loops[key] = entry
+            self._jobs[jid] = {"id": jid, "kind": "loop", "label": label, "state": "playing",
+                               "sound": action.get("sound"), "text": None, "voice": "",
+                               "until": spec["until"].isoformat(timespec="seconds"),
+                               "created": self._now(), "started": self._now()}
+            while len(self._jobs) > JOB_KEEP:
+                self._jobs.popitem(last=False)
+        threading.Thread(target=self._loop_body, args=(key, spec, entry), name="loop", daemon=True).start()
+
+    def _stop_loop(self, key: str, reason: str, done: bool = False) -> None:
+        with self._lock:
+            entry = self._loops.pop(key, None)
+        if not entry:
+            return
+        entry["stop"].set()
+        for proc in list(entry["procs"]):
+            if proc.poll() is None:
+                self._signal_group(proc, signal.SIGTERM)
+        self._mark(entry["jid"], state="done" if done else "stopped", reason=reason, finished=self._now())
+
+    def _loop_body(self, key: str, spec: dict, entry: dict) -> None:
+        action, label, until = spec["action"], spec.get("label", ""), spec["until"]
+        stop = entry["stop"]
+        volume = action.get("volume", spec.get("settings", {}).get("default_volume", 0.6))
+        try:
+            path = self.resolve(action.get("sound", ""))
+        except SoundNotFound as exc:
+            self._log("error", f"{label}: {exc}")
+            with self._lock:
+                self._loops.pop(key, None)
+                self._dismissed.add(key)       # 毎秒やり直さない
+            self._mark(entry["jid"], state="failed", reason=str(exc), finished=self._now())
+            return
+        outs = outputs_of(action)
+        devices = [o for o in outs if o["id"] != MAC]
+        mac = not outs or len(devices) < len(outs)
+        used: list[str] = []
+        helper = None
+        if devices and self.airplay and self.airplay.available():
+            argv = self.airplay.argv(devices, volume, [str(path)])
+            argv[argv.index("--"):argv.index("--")] = ["--until", f"{until.timestamp():.0f}"]
+            try:
+                helper = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                          start_new_session=True)
+                entry["procs"].append(helper)
+            except OSError as exc:
+                self._log("error", f"{label}: AirPlay で鳴らせませんでした: {exc}")
+            if helper and select.select([helper.stdout], [], [], AIRPLAY_CONNECT_TIMEOUT)[0]:
+                try:
+                    res = json.loads(helper.stdout.readline() or b"{}")
+                except ValueError:
+                    res = {}
+                names = {d["id"]: d.get("name") or d["id"] for d in devices}
+                used = [names.get(i, i) for i in res.get("connected") or []]
+            failed = [d.get("name") or d["id"] for d in devices if (d.get("name") or d["id"]) not in used]
+            if failed:
+                self._log("error", f"{label}: AirPlay「{'・'.join(failed)}」で鳴らせなかったので、この Mac でも鳴らします")
+                self._mark(entry["jid"], fallback=True,
+                           note=f"「{'・'.join(failed)}」で鳴らせなかったので、この Mac で鳴らしました")
+                mac = True
+            if used and mac:
+                stop.wait(AIRPLAY_DELAY)
+        elif devices:
+            self._log("error", f"{label}: AirPlay の部品が無いので、この Mac で鳴らします")
+            mac = True
+        if mac:
+            used.append("この Mac")
+        self._mark(entry["jid"], output="・".join(used))
+        if mac:
+            # afplay は -t で長さを切れる。1 回鳴り終わるたびに先頭からまた鳴らす
+            while not stop.is_set():
+                left = (until - datetime.now()).total_seconds()
+                if left <= 0.2:
+                    break
+                try:
+                    proc = subprocess.Popen([self.afplay, "-v", f"{volume:.3f}", "-t", f"{left:.1f}", str(path)],
+                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                            start_new_session=True)
+                except OSError as exc:
+                    self._log("error", f"{label}: 再生に失敗しました: {exc}")
+                    break
+                entry["procs"].append(proc)
+                if stop.is_set():
+                    self._signal_group(proc, signal.SIGTERM)
+                proc.wait()
+                entry["procs"].remove(proc)
+                if proc.returncode not in (0,) and not stop.is_set():
+                    stop.wait(1.0)        # すぐ失敗するときに空回りしない
+        if helper:
+            while helper.poll() is None and not stop.is_set():
+                if datetime.now() >= until + timedelta(seconds=5):
+                    self._signal_group(helper, signal.SIGTERM)
+                    break
+                stop.wait(0.5)
+            if helper.poll() is None:
+                self._signal_group(helper, signal.SIGTERM)
+            helper.communicate()
+        early = datetime.now() < until - timedelta(seconds=5)
+        with self._lock:
+            mine = self._loops.get(key) is entry
+            if mine:
+                del self._loops[key]
+                if early:   # 途中で切れた（機器が離れたなど）。少し待ってからやり直す
+                    self._retry_at[key] = time.monotonic() + LOOP_RETRY
+                else:
+                    self._dismissed.add(key)       # 時間帯の最後まで鳴らした
+        if mine:
+            self._mark(entry["jid"], state="failed" if early else "done", finished=self._now(),
+                       **({"reason": "途中で切れました（少ししてからやり直します）"} if early else {}))
 
     def _forget(self, proc: subprocess.Popen) -> None:
         with self._lock:

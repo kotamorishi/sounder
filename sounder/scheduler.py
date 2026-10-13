@@ -88,6 +88,14 @@ def day_occurrences(sched: dict, day: date, *, ignore_skip: bool = False
     return out
 
 
+def loop_end(sched: dict, start: datetime) -> datetime | None:
+    """「終わりの時刻まで繰り返す」予定の、その回の終わり。日付をまたぐ（23:00〜6:00 など）こともある。"""
+    if not sched.get("until"):
+        return None
+    end = _at(start.date(), _minutes(sched["until"]))
+    return end if end > start else end + timedelta(days=1)
+
+
 def events_between(sched: dict, lo: datetime, hi: datetime) -> list[tuple[datetime, str, int]]:
     """lo < t <= hi に入る発火時刻を返す。"""
     found = []
@@ -188,6 +196,7 @@ def calendar_days(schedules: list[dict], start: date, days: int,
             skipped = day.isoformat() in (s.get("skip_dates") or ())
             off = DAY_SKIPPED if skipped else daysoff.off_reason(s.get("skip"), day)
             for when, tag, lead in day_occurrences(s, day, ignore_skip=True):
+                loop = loop_end(s, when) if tag == "main" else None
                 events.append({
                     "schedule_id": s["id"],
                     "name": s["name"],
@@ -212,8 +221,11 @@ def calendar_days(schedules: list[dict], start: date, days: int,
                     "recurring": s.get("recurring"),
                     "calendar": s.get("calendar"),
                     "starts": s.get("starts"),
-                    "starts_at": s.get("starts_at"),
-                    "ends_at": s.get("ends_at"),
+                    "starts_at": s.get("starts_at") or (
+                        when.isoformat(timespec="seconds") if loop and tag == "main" else None),
+                    "ends_at": s.get("ends_at") or (
+                        loop.isoformat(timespec="seconds") if loop and tag == "main" else None),
+                    "loop": bool(loop),
                 })
         events.sort(key=lambda e: e["at"])
         out.append({
@@ -365,6 +377,7 @@ class Scheduler:
                     continue
                 self._fired.add(key)
                 self._fire(sched, when, tag, lead, now, settings)
+        self._sync_loops(now, settings)
         if len(self._fired) > 4000:
             self._fired = set(list(self._fired)[-1000:])
         if now >= self._next_prefetch:
@@ -377,6 +390,38 @@ class Scheduler:
         if sleep_idle and now >= self._next_idle_check:
             self._next_idle_check = now + timedelta(seconds=IDLE_CHECK_EVERY)
             sleep_idle(60.0 * settings.get("tts_idle_minutes", 30))
+
+    def _sync_loops(self, now: datetime, settings: dict) -> None:
+        """「終わりの時刻まで繰り返す」予定は、時間帯に入っている間ずっと鳴らしておく。
+
+        1 回きりの発火ではなく「いま鳴っているべきか」で決めるので、途中で起動・復帰しても残りの時間を鳴らし、
+        予定を消す・オフにする・全体オフ・禁止時間に入ると止まる。停止ボタンで止めたら、その回はもう鳴らさない。
+        """
+        sync = getattr(self.player, "sync_loops", None)
+        if sync is None:
+            return
+        desired, names = {}, {}
+        if settings.get("master_enabled", True):
+            for sched in self.all_schedules(settings):
+                if not sched.get("until") or not sched.get("enabled") or in_quiet_hours(settings, now):
+                    continue
+                for day in (now.date() - timedelta(days=1), now.date()):
+                    for when, tag, lead in day_occurrences(sched, day):
+                        end = loop_end(sched, when) if tag == "main" else None
+                        if end and when <= now < end:
+                            action = self.action_for(sched, "main", 0, settings, when=when)
+                            # 音や場所を変えたら、別の回として鳴らし直す
+                            sig = "|".join([action.get("sound") or "", f"{action.get('volume')}",
+                                            ",".join(o["id"] for o in action.get("outputs") or [])])
+                            key = f"{sched['id']}|{when.isoformat()}|{sig}"
+                            desired[key] = {"action": action,
+                                            "settings": settings, "until": end, "label": sched["name"]}
+                            names[key] = (sched, when, end)
+        for key in sync(desired):
+            sched, when, end = names[key]
+            self.log("fired", f"{sched['name']} を再生しました（{end:%H:%M} まで繰り返し）", schedule_id=sched["id"])
+            if not sched.get("source"):
+                self.store.mark_fired(sched["id"], when)
 
     def clean_past_once(self, today: date) -> list[str]:
         """日付が昨日以前の「1回だけ」の予定を消す（1 日 1 回）。今日の分はタイムラインで結果を見られるよう残す。
@@ -430,6 +475,8 @@ class Scheduler:
             self._prefetched = set(list(self._prefetched)[-1000:])
 
     def _fire(self, sched: dict, when: datetime, tag: str, lead: int, now, settings) -> None:
+        if tag == "main" and sched.get("until"):
+            return   # 繰り返しの本番は _sync_loops が鳴らす（予告はふつうに鳴らす）
         name = sched["name"]
         label = f"{name}（{lead}分前の予告）" if tag == "lead" else name
         if sched.get("source") == "calendar":

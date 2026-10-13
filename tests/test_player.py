@@ -613,6 +613,66 @@ class TestAirPlay(Base):
         self.assertTrue(job["fallback"])
         self.assertEqual(sum(l.startswith("afplay") for l in self.recorded()), 2)
 
+    def test_loop_streams_one_file_until_the_end(self):
+        from datetime import datetime, timedelta
+        self.ok.write_text('"ABC"')
+        until = datetime.now() + timedelta(seconds=30)
+        self.p.sync_loops({"k": {"action": {"type": "sound", "sound": "builtin:ding", "outputs": [self.BED]},
+                                 "settings": {}, "until": until, "label": "ノイズ"}})
+        end = time.time() + 3
+        while time.time() < end and self.p.looping():
+            time.sleep(0.02)
+        (line,) = self.recorded()
+        self.assertIn(f"--until {until.timestamp():.0f} --", line)
+        # ダミーはすぐ終わる＝途中で切れたので、失敗として少し後にやり直す
+        self.assertEqual(self.p.jobs()[0]["state"], "failed")
+        self.assertEqual(self.p.sync_loops({"k": {"action": {}, "settings": {}, "until": until}}), [])
+        self.p.sync_loops({})
+
     def test_old_single_output_is_read(self):
         self.assertEqual(player_mod.outputs_of({"output": self.BED}), [self.BED])
         self.assertEqual(player_mod.outputs_of({}), [])
+
+
+class TestLoop(Base):
+    def setUp(self):
+        super().setUp()
+        self.p.afplay = self._script("afplay_t", '#!/bin/sh\nprintf \'afplay %s\\n\' "$*" >> "{log}"\nsleep 0.3\n')
+
+    def spec(self, seconds):
+        from datetime import datetime, timedelta
+        return {"action": {"type": "sound", "sound": "builtin:ding", "volume": 0.4},
+                "settings": {}, "until": datetime.now() + timedelta(seconds=seconds), "label": "ノイズ"}
+
+    def test_repeats_until_the_end_on_this_mac(self):
+        self.assertEqual(self.p.sync_loops({"k": self.spec(1.0)}), ["k"])
+        self.assertTrue(self.p.is_playing())
+        self.assertEqual(self.p.sync_loops({"k": self.spec(1.0)}), [])   # 二重には始めない
+        time.sleep(1.6)
+        lines = self.recorded()
+        self.assertGreaterEqual(len(lines), 2)
+        self.assertIn("-t", lines[0])
+        self.assertEqual(self.p.looping(), [])
+        self.assertEqual(self.p.sync_loops({"k": self.spec(1.0)}), [])   # 最後まで鳴らした回はやり直さない
+        self.assertEqual(self.p.jobs()[0]["state"], "done")
+
+    def test_stop_button_dismisses_until_window_changes(self):
+        self.p.sync_loops({"k": self.spec(30)})
+        time.sleep(0.1)
+        self.p.stop()
+        self.assertEqual(self.p.looping(), [])
+        self.assertEqual(self.p.sync_loops({"k": self.spec(30)}), [])
+        self.p.sync_loops({})
+        self.assertEqual(self.p.sync_loops({"k": self.spec(30)}), ["k"])
+        self.p.sync_loops({})
+        self.assertEqual(self.p.looping(), [])
+
+    def test_does_not_block_normal_playback(self):
+        self.p.sync_loops({"k": self.spec(30)})
+        jid = self.p.play({"type": "sound", "sound": "builtin:doorbell"}, settings={}, queue=True)
+        end = time.time() + 3
+        while time.time() < end and self.p.job(jid)["state"] != "done":
+            time.sleep(0.02)
+        self.assertEqual(self.p.job(jid)["state"], "done")
+        self.assertEqual(self.p.looping(), ["k"])
+        self.p.sync_loops({})

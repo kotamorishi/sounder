@@ -6,6 +6,7 @@
         → すべての機器につないだところで標準出力に 1 行 {"connected": [id...], "failed": [id...]} を出し、
           つながった機器で一斉にファイルを順に鳴らす。鳴り終わったら終了コード 0
           終了コード 2 = どの機器にもつながらない（何も鳴っていない）。sounder はこの Mac で代わりに鳴らす
+        --until 時刻（UNIX 秒）を付けると、最初のファイルをその時刻まで切れ目なく繰り返す（1 本の流れのまま）
 
 sounder 本体は標準ライブラリだけで動かすため、pyatv はこの別プロセスに閉じ込める。
 """
@@ -16,9 +17,48 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 
 import pyatv
+import pyatv.protocols.raop as raop
 from pyatv.const import Protocol
+from pyatv.protocols.raop import audio_source
+
+_open_source = raop.open_source
+
+
+class LoopSource(audio_source.FileSource):
+    """ファイルの終わりで先頭に戻り、until まで音を出し続ける。つなぎ直さないので切れ目がない。"""
+
+    until = 0.0
+
+    async def readframes(self, nframes: int) -> bytes:
+        if time.time() >= self.until or not self.samples:
+            return audio_source.AudioSource.NO_FRAMES
+        want = self.sample_size * self.channels * nframes
+        out = bytearray()
+        while len(out) < want:
+            if self.pos >= len(self.samples):
+                self.pos = 0
+            chunk = self.samples[self.pos:self.pos + want - len(out)]
+            self.pos += len(chunk)
+            out += chunk
+        return audio_source._to_audio_samples(bytes(out))
+
+    @property
+    def duration(self) -> int:
+        return max(1, round(self.until - time.time()))
+
+
+def loop_until(until: float) -> None:
+    """これ以降の stream_file を、until まで繰り返す流れにする。"""
+    async def open_loop(source, sample_rate, channels, sample_size):
+        src = await _open_source(source, sample_rate, channels, sample_size)
+        if isinstance(src, audio_source.FileSource):
+            src.__class__ = LoopSource
+            src.until = until
+        return src
+    raop.open_source = open_loop
 
 NOT_FOUND = 2
 
@@ -94,11 +134,15 @@ def main() -> int:
     p = sub.add_parser("play")
     p.add_argument("--device", action="append", required=True, help="ID か ID@アドレス")
     p.add_argument("--volume", type=float)
+    p.add_argument("--until", type=float, help="この時刻（UNIX 秒）まで最初のファイルを繰り返す")
     p.add_argument("files", nargs="+")
     a = ap.parse_args()
     if a.cmd == "scan":
         print(json.dumps(asyncio.run(scan(a.timeout)), ensure_ascii=False))
         return 0
+    if a.until:
+        loop_until(a.until)
+        a.files = a.files[:1]
     devices = [(d.split("@", 1)[0], (d.split("@", 1)[1:] or [None])[0]) for d in a.device]
     return asyncio.run(play(devices, a.volume, a.files))
 

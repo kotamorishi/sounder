@@ -237,6 +237,20 @@ def validate_schedule(raw: Any, *, keep_id: str | None = None) -> dict[str, Any]
     else:
         s["lead_action"] = None
 
+    # 終わりの時刻まで、サウンドを繰り返し流し続ける（例 22:00〜23:00）。間隔の予定では使えない
+    until = raw.get("until") or None
+    if until:
+        if kind == "interval":
+            raise ValidationError("一定間隔の予定には、終わりの時刻は付けられません")
+        s["until"] = _time(until, "終わりの時刻")
+        if s["until"] == s["time"]:
+            raise ValidationError("終わりの時刻は、始まりの時刻と違う時刻にしてください")
+        if action["type"] != "sound":
+            raise ValidationError("終わりの時刻まで繰り返すときは、サウンドだけにしてください（読み上げはできません）")
+        s["outing"] = False   # 天気の読み上げは付けない
+    else:
+        s["until"] = None
+
     s["last_fired"] = raw.get("last_fired") if isinstance(raw.get("last_fired"), str) else None
     return s
 
