@@ -299,6 +299,19 @@ class TestOutput(Base):
         with self.assertRaises(config.ValidationError):
             self.add(outputs=[{"name": "id が無い"}])
 
+    def test_volume_per_output(self):
+        bed = {"id": "ABC", "name": "Bedroom", "address": ""}
+        mac = {"id": "mac", "name": "この Mac", "address": ""}
+        s = self.add(name="起床", outputs=[{**bed, "volume": 0.3}, {**mac, "volume": 1.2}])
+        self.assertEqual(s["outputs"], [{**bed, "volume": 0.3}, {**mac, "volume": 1.2}])
+        # AirPlay の機器は 100% まで。空は「予定と同じ」
+        self.assertEqual(self.add(name="a", outputs=[{**bed, "volume": 1.5}])["outputs"], [{**bed, "volume": 1.0}])
+        self.assertEqual(self.add(name="b", outputs=[{**bed, "volume": None}])["outputs"], [bed])
+        # この Mac だけでも音量があれば残す
+        self.assertEqual(self.add(name="c", outputs=[{**mac, "volume": 0.4}])["outputs"], [{**mac, "volume": 0.4}])
+        with self.assertRaises(config.ValidationError):
+            self.add(name="d", outputs=[{**bed, "volume": "大"}])
+
     def test_old_single_output_is_migrated(self):
         bed = {"id": "ABC", "name": "Bedroom", "address": ""}
         self.assertEqual(self.add(name="起床", output=bed)["outputs"], [bed])

@@ -49,6 +49,14 @@ def outputs_of(action: dict) -> list[dict]:
     return [o for o in outs or [] if isinstance(o, dict) and o.get("id")]
 
 
+def mac_volume(action: dict, volume: float) -> float:
+    """この Mac で鳴らす音量。鳴らす場所の「この Mac」に音量があればそれ、無ければ予定の音量。"""
+    for o in outputs_of(action):
+        if o["id"] == MAC and o.get("volume") is not None:
+            return float(o["volume"])
+    return volume
+
+
 class SoundNotFound(Exception):
     """指定されたサウンドが見つからない。"""
 
@@ -467,6 +475,7 @@ class Player:
 
         atype = action.get("type", "sound")
         volume = action.get("volume", settings.get("default_volume", 0.6))
+        local = mac_volume(action, volume)
         repeat = max(1, int(action.get("repeat", 1)))
         items: list[list[str]] = []
 
@@ -479,7 +488,7 @@ class Player:
                 problems.append(str(exc))
                 path = None
             if path:
-                items.append([self.afplay, "-v", f"{volume:.3f}", str(path)])
+                items.append([self.afplay, "-v", f"{local:.3f}", str(path)])
 
         if atype in ("speak", "both"):
             voice = action.get("voice") or settings.get("default_voice") or ""
@@ -498,7 +507,7 @@ class Player:
                 if tmp is None:
                     problems.append("読み上げの音声を作れませんでした")
             if tmp:
-                items.append([self.afplay, "-v", f"{volume:.3f}", str(tmp)])
+                items.append([self.afplay, "-v", f"{local:.3f}", str(tmp)])
 
         if not items:
             self._mark(jid, state="failed", finished=self._now(),
@@ -680,6 +689,7 @@ class Player:
         action, label, until = spec["action"], spec.get("label", ""), spec["until"]
         stop = entry["stop"]
         volume = action.get("volume", spec.get("settings", {}).get("default_volume", 0.6))
+        local = mac_volume(action, volume)
         try:
             path = self.resolve(action.get("sound", ""))
         except SoundNotFound as exc:
@@ -731,7 +741,7 @@ class Player:
                 if left <= 0.2:
                     break
                 try:
-                    proc = subprocess.Popen([self.afplay, "-v", f"{volume:.3f}", "-t", f"{left:.1f}", str(path)],
+                    proc = subprocess.Popen([self.afplay, "-v", f"{local:.3f}", "-t", f"{left:.1f}", str(path)],
                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                             start_new_session=True)
                 except OSError as exc:

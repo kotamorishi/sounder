@@ -1840,13 +1840,43 @@ function renderOutput() {
       if (!chosen.size) { chosen.add('mac'); toast('どこにも鳴らさないことはできないので、この Mac にしました'); }
       draft.outputs = [...chosen].filter((id) => !(chosen.size === 1 && id === 'mac')).map((id) => {
         const d = places.find((x) => x.id === id) || {};
-        return { id, name: d.name || id, address: d.address || '' };
+        const before = outs.find((o) => o.id === id);
+        const o = { id, name: d.name || id, address: d.address || '' };
+        if (before && before.volume != null) o.volume = before.volume;
+        return o;
       });
       renderOutput();
     });
     c.append(label, sw);
     box.append(c);
+    const out = outs.find((o) => o.id === p.id);
+    if (out) box.append(outputVolumeCell(out, p.id === 'mac'));
   }
+}
+
+// 鳴らす場所ごとの音量。指定が無ければ予定の音量（AirPlay の機器は 100% まで）
+function outputVolumeCell(out, isMac) {
+  const c = el('div', 'cell cell-slider out-vol');
+  const label = el('span', 'cell-label');
+  const range = el('input');
+  range.type = 'range';
+  range.min = '0';
+  range.max = isMac ? '1.5' : '1';
+  range.step = '0.05';
+  range.setAttribute('aria-label', `${out.name || out.id}の音量`);
+  const shown = el('output', 'cell-value');
+  const show = () => {
+    const own = out.volume != null;
+    range.value = own ? out.volume : Math.min(Number(draft.action.volume ?? 0.6), Number(range.max));
+    label.textContent = own ? '音量' : '音量（予定と同じ）';
+    shown.textContent = SL.volumePct(range.value);
+    setRangeFill(range);
+  };
+  range.addEventListener('input', () => { out.volume = Number(range.value); show(); });
+  range.addEventListener('change', () => { if (actionType()) previewMain(); });
+  c.append(label, range, shown);
+  show();
+  return c;
 }
 
 function outputLabel(outs) { return (outs || []).map((o) => o.name || o.id).join('・'); }
@@ -2560,7 +2590,7 @@ function wire() {
     draft.days = b.dataset.days.split(',').map(Number);
     renderRepeatPage();
   }));
-  $('#f-volume').addEventListener('input', (e) => { draft.action.volume = Number(e.target.value); renderEditorValues(); });
+  $('#f-volume').addEventListener('input', (e) => { draft.action.volume = Number(e.target.value); renderEditorValues(); if ((draft.outputs || []).length) renderOutput(); });
   $('#f-volume').addEventListener('change', () => { if (actionType()) previewMain(); });
   $('#f-test').addEventListener('click', previewMain);
   $('#f-repeat-dec').addEventListener('click', () => { draft.action.repeat = Math.max(1, (draft.action.repeat || 1) - 1); renderEditorValues(); });

@@ -278,6 +278,8 @@ input[type="time"].cell-input, input[type="date"].cell-input { min-width: 96px; 
 .cell-slider input[type="range"] { flex: 1 1 auto; min-width: 0; }
 .cell-slider .cell-value { flex: 0 0 auto; min-width: 42px; text-align: right; font-size: 15px; }
 .cell-slider .play-btn { margin-right: -8px; }
+.out-vol { padding-left: 32px; }
+.out-vol .cell-label { color: var(--ink-2); font-size: 14px; }
 
 .check-cell .check { color: var(--accent); visibility: hidden; }
 .check-cell[aria-checked="true"] .check { visibility: visible; }

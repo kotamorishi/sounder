@@ -202,7 +202,7 @@ scripts/install-airplay.sh      # .venv-airplay/ を作り、見つかった機�
 
 - 確認: `.venv-airplay/bin/python airplay/airplay_send.py scan` に HomePod が並ぶ。`GET /api/airplay`（`?refresh=1` で探し直す）。
 - 👤 画面の予定の編集 →「鳴らす場所」で機器を選ぶ（いくつでも。「この Mac」も）。予定の `outputs`（`[{"id","name","address"}]`、id `"mac"` はこの Mac）に入り、本番も予告も選んだ場所すべてで一斉に鳴る（1 つの補助プロセスが全機器につないでから同時に送る。この Mac は `player.AIRPLAY_DELAY` 秒待って合わせる）。
-- 音量は予定の音量をその機器の音量として送る。鳴り始めは 2〜3 秒遅れる。その機器で音楽を流していると止まる。
+- 音量は場所ごとに選べる（`outputs[].volume`。無ければ予定の音量）。AirPlay の機器にはその機器の音量（0〜1 = 0〜100%、pyatv が -30〜0dB に直線で割り当てるので 50% でも大きい）として送り、この Mac は `afplay -v`（Mac 本体の音量も掛かる）。補助スクリプトには `--device ID@ADDR=音量` で渡す。鳴り始めは 2〜3 秒遅れる。その機器で音楽を流していると止まる。
 - つながらない機器がある・部品が無いときは、この Mac（afplay）でも鳴らす（再生の記録に `fallback`）。
 
 - 予定に `until`（終わりの時刻）があると、本番は 1 回鳴らすのではなく、時間帯のあいだサウンドを繰り返し流し続ける。

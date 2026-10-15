@@ -583,6 +583,13 @@ class TestAirPlay(Base):
         self.assertIn("play --device ABC@192.0.2.1 --device DEF --volume 0.500 --", line)
         self.assertEqual(line.count("ding.wav"), 2)   # 繰り返しの分も送る
 
+    def test_volume_per_place(self):
+        self.play('"ABC", "DEF"', [{**self.BED, "volume": 0.3}, self.LIV, {"id": "mac", "volume": 0.8}])
+        lines = self.recorded()
+        # 音量のある機器だけ =音量。無い機器は予定の音量（--volume）
+        self.assertIn("play --device ABC@192.0.2.1=0.300 --device DEF --volume 0.500 --", lines[0])
+        self.assertTrue(all("-v 0.800" in l for l in lines if l.startswith("afplay")))
+
     def test_with_this_mac_too(self):
         job = self.play('"ABC"', [self.BED, {"id": "mac", "name": "この Mac"}])
         self.assertEqual(job["output"], "Bedroom・この Mac")

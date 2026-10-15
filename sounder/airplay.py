@@ -3,7 +3,7 @@
 pyatv は標準ライブラリではないので、別の Python 環境（.venv-airplay、scripts/install-airplay.sh）に入れ、
 補助スクリプト airplay/airplay_send.py をプロセスとして呼ぶ。入っていなければ「この Mac」だけが選べる。
 
-予定の outputs（[{"id", "name", "address"}, ...]。"mac" はこの Mac）に機器を入れると、再生層（player.py）がこれで送る。
+予定の outputs（[{"id", "name", "address", "volume"?}, ...]。"mac" はこの Mac。volume は場所ごとの音量）に機器を入れると、再生層（player.py）がこれで送る。
 つながらなければ、これまでどおりこの Mac で鳴らす。
 """
 
@@ -60,7 +60,10 @@ class AirPlay:
         argv = [str(self.python), str(self.script), "play"]
         for o in outputs:
             address = (known.get(o["id"]) or {}).get("address") or o.get("address") or ""
-            argv += ["--device", f"{o['id']}@{address}" if address else o["id"]]
+            spec = f"{o['id']}@{address}" if address else o["id"]
+            if o.get("volume") is not None:
+                spec += f"={float(o['volume']):.3f}"    # 機器ごとの音量（無ければ --volume）
+            argv += ["--device", spec]
         if volume is not None:
             argv += ["--volume", f"{float(volume):.3f}"]
         return argv + ["--"] + [str(f) for f in files]

@@ -120,8 +120,12 @@ def _outputs(value: Any) -> list[dict[str, str]]:
         oid = o["id"].strip()[:64]
         out[oid] = {"id": oid, "name": str(o.get("name") or "").strip()[:80],
                     "address": str(o.get("address") or "").strip()[:64]}
-    # この Mac だけなら空（既定）と同じ
-    return [] if list(out) == ["mac"] else list(out.values())
+        # 場所ごとの音量（無ければ予定の音量）。AirPlay の機器はその機器の音量（0〜1 = 0〜100%）
+        vol = _volume(o.get("volume"), None)
+        if vol is not None:
+            out[oid]["volume"] = min(vol, 1.0) if oid != "mac" else vol
+    # この Mac だけ（音量の指定も無い）なら空（既定）と同じ
+    return [] if list(out) == ["mac"] and "volume" not in out["mac"] else list(out.values())
 
 
 def _ids(value: Any, label: str) -> list[str]:

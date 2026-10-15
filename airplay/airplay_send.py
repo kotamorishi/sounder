@@ -2,7 +2,7 @@
 
     airplay_send.py scan
         → 標準出力に JSON: [{"id", "name", "model", "address"}, ...]
-    airplay_send.py play --device ID[@ADDR] [--device ...] [--volume 0〜1] -- ファイル...
+    airplay_send.py play --device ID[@ADDR][=音量] [--device ...] [--volume 0〜1] -- ファイル...
         → すべての機器につないだところで標準出力に 1 行 {"connected": [id...], "failed": [id...]} を出し、
           つながった機器で一斉にファイルを順に鳴らす。鳴り終わったら終了コード 0
           終了コード 2 = どの機器にもつながらない（何も鳴っていない）。sounder はこの Mac で代わりに鳴らす
@@ -115,15 +115,22 @@ async def stream(atv, files: list[str]) -> bool:
         atv.close()
 
 
-async def play(devices: list[tuple[str, str | None]], volume: float | None, files: list[str]) -> int:
-    atvs = await asyncio.gather(*(connect(i, a, volume) for i, a in devices))
-    ok = [(ident, atv) for (ident, _a), atv in zip(devices, atvs) if atv]
+async def play(devices: list[tuple[str, str | None, float | None]], volume: float | None, files: list[str]) -> int:
+    atvs = await asyncio.gather(*(connect(i, a, volume if v is None else v) for i, a, v in devices))
+    ok = [(ident, atv) for (ident, _a, _v), atv in zip(devices, atvs) if atv]
     print(json.dumps({"connected": [i for i, _ in ok],
-                      "failed": [i for (i, _a), atv in zip(devices, atvs) if not atv]}), flush=True)
+                      "failed": [i for (i, _a, _v), atv in zip(devices, atvs) if not atv]}), flush=True)
     if not ok:
         return NOT_FOUND
     done = await asyncio.gather(*(stream(atv, files) for _i, atv in ok))
     return 0 if all(done) else 1
+
+
+def parse_device(spec: str) -> tuple[str, str | None, float | None]:
+    """ID[@アドレス][=音量] を (ID, アドレス, 音量) に。"""
+    spec, _, vol = spec.partition("=")
+    ident, _, address = spec.partition("@")
+    return ident, address or None, float(vol) if vol else None
 
 
 def main() -> int:
@@ -132,7 +139,7 @@ def main() -> int:
     s = sub.add_parser("scan")
     s.add_argument("--timeout", type=int, default=4)
     p = sub.add_parser("play")
-    p.add_argument("--device", action="append", required=True, help="ID か ID@アドレス")
+    p.add_argument("--device", action="append", required=True, help="ID か ID@アドレス（=音量 で機器ごとの音量）")
     p.add_argument("--volume", type=float)
     p.add_argument("--until", type=float, help="この時刻（UNIX 秒）まで最初のファイルを繰り返す")
     p.add_argument("files", nargs="+")
@@ -143,7 +150,7 @@ def main() -> int:
     if a.until:
         loop_until(a.until)
         a.files = a.files[:1]
-    devices = [(d.split("@", 1)[0], (d.split("@", 1)[1:] or [None])[0]) for d in a.device]
+    devices = [parse_device(d) for d in a.device]
     return asyncio.run(play(devices, a.volume, a.files))
 
 
