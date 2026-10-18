@@ -211,7 +211,7 @@ scripts/install-airplay.sh      # .venv-airplay/ を作り、見つかった機�
   AirPlay では補助スクリプトの `--until` で 1 本の流れのままファイルの先頭に戻る（切れ目なし）。この Mac は `afplay -t` を繰り返す。
 - 予定とは別に、設定の「時間帯で流す」（`settings.bgm`: `[{"id","name","enabled","start","end","sound","volume","outputs"}]`）で
   毎日 start〜end のあいだサウンドを繰り返し流せる。`scheduler.bgm_schedules` が `until` 付きの毎日の予定の形にして `_sync_loops` にだけ渡すので、
-  予定の一覧・タイムライン・次の予定には出ない。保存は `PUT /api/settings {"bgm":[…]}`（一覧ごと送る。サウンドが無ければ 400）。
+  予定の一覧・タイムライン・次の予定には出ない。禁止時間でも流す（全体オフでは止まる）。保存は `PUT /api/settings {"bgm":[…]}`（一覧ごと送る。サウンドが無ければ 400）。
 
 ## 8. 運用
 

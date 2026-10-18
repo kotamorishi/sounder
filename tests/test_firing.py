@@ -419,13 +419,14 @@ class TestBgm(Base):
         self.assertEqual(self.sched.all_schedules(), [])
         self.assertEqual(self.store.schedules(), [])
 
-    def test_off_and_quiet_hours_stop_it(self):
+    def test_off_and_master_stop_it_but_quiet_hours_do_not(self):
         self.set_bgm(enabled=False)
         self.assertEqual(self.run_at(datetime(2026, 9, 21, 10, 0)), {})
         self.set_bgm()
         self.store.update_settings({"quiet_hours": {"enabled": True, "start": "09:30", "end": "10:30"}})
-        self.assertEqual(self.run_at(datetime(2026, 9, 21, 10, 0)), {})
-        self.assertEqual(len(self.run_at(datetime(2026, 9, 21, 10, 31))), 1)
+        self.assertEqual(len(self.run_at(datetime(2026, 9, 21, 10, 0))), 1)
+        self.store.update_settings({"master_enabled": False})
+        self.assertEqual(self.run_at(datetime(2026, 9, 21, 10, 1)), {})
 
     def test_crosses_midnight(self):
         self.set_bgm(start="22:00", end="06:00")

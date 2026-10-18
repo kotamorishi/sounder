@@ -412,7 +412,7 @@ class Scheduler:
         """「終わりの時刻まで繰り返す」予定は、時間帯に入っている間ずっと鳴らしておく。
 
         1 回きりの発火ではなく「いま鳴っているべきか」で決めるので、途中で起動・復帰しても残りの時間を鳴らし、
-        予定を消す・オフにする・全体オフ・禁止時間に入ると止まる。停止ボタンで止めたら、その回はもう鳴らさない。
+        予定を消す・オフにする・全体オフ・禁止時間に入ると止まる（設定の「時間帯で流す」は禁止時間でも止めない）。停止ボタンで止めたら、その回はもう鳴らさない。
         """
         sync = getattr(self.player, "sync_loops", None)
         if sync is None:
@@ -420,8 +420,10 @@ class Scheduler:
         desired, names = {}, {}
         if settings.get("master_enabled", True):
             for sched in self.all_schedules(settings) + bgm_schedules(settings):
-                if not sched.get("until") or not sched.get("enabled") or in_quiet_hours(settings, now):
+                if not sched.get("until") or not sched.get("enabled"):
                     continue
+                if sched.get("source") != "bgm" and in_quiet_hours(settings, now):
+                    continue   # 「時間帯で流す」は禁止時間でも流す
                 for day in (now.date() - timedelta(days=1), now.date()):
                     for when, tag, lead in day_occurrences(sched, day):
                         end = loop_end(sched, when) if tag == "main" else None
