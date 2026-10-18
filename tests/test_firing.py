@@ -385,3 +385,72 @@ class TestUntil(Base):
         (e,) = scheduler.calendar_days([s], datetime(2026, 9, 21).date(), 1, now=datetime(2026, 9, 20))[0]["events"]
         self.assertEqual((e["starts_at"], e["ends_at"], e["loop"]),
                          ("2026-09-21T22:00:00", "2026-09-21T23:30:00", True))
+
+
+class TestBgm(Base):
+    """設定の「時間帯で流す」。毎日、予定とは別に流し、予定の一覧・タイムラインには出さない。"""
+
+    def setUp(self):
+        super().setUp()
+        self.player = LoopPlayer()
+        self.sched = scheduler.Scheduler(self.store, self.player, self.log)
+
+    run_at = TestUntil.run_at
+
+    BED = {"id": "ABC", "name": "Bedroom", "address": "192.168.1.5", "volume": 0.3}
+
+    def set_bgm(self, **kw):
+        b = {"name": "BGM", "start": "09:00", "end": "11:30", "sound": "user:bgm.mp3",
+             "volume": 0.5, "outputs": [self.BED], **kw}
+        return self.store.update_settings({"bgm": [b]})["bgm"][0]
+
+    def test_loops_every_day_on_chosen_outputs(self):
+        b = self.set_bgm()
+        self.assertEqual(self.run_at(datetime(2026, 9, 21, 8, 59)), {})
+        for day in (21, 26):   # 平日も週末も
+            (key, spec), = self.run_at(datetime(2026, 9, day, 10, 0)).items()
+            self.assertTrue(key.startswith(f"bgm:{b['id']}|2026-09-{day}T09:00:00|"))
+            self.assertEqual(spec["until"], datetime(2026, 9, day, 11, 30))
+            self.assertEqual(spec["action"]["sound"], "user:bgm.mp3")
+            self.assertEqual(spec["action"]["volume"], 0.5)
+            self.assertEqual(spec["action"]["outputs"], [self.BED])
+        self.assertEqual(self.run_at(datetime(2026, 9, 26, 11, 30)), {})
+        # 予定・タイムラインには出ない
+        self.assertEqual(self.sched.all_schedules(), [])
+        self.assertEqual(self.store.schedules(), [])
+
+    def test_off_and_quiet_hours_stop_it(self):
+        self.set_bgm(enabled=False)
+        self.assertEqual(self.run_at(datetime(2026, 9, 21, 10, 0)), {})
+        self.set_bgm()
+        self.store.update_settings({"quiet_hours": {"enabled": True, "start": "09:30", "end": "10:30"}})
+        self.assertEqual(self.run_at(datetime(2026, 9, 21, 10, 0)), {})
+        self.assertEqual(len(self.run_at(datetime(2026, 9, 21, 10, 31))), 1)
+
+    def test_crosses_midnight(self):
+        self.set_bgm(start="22:00", end="06:00")
+        (key, spec), = self.run_at(datetime(2026, 9, 22, 5, 0)).items()
+        self.assertIn("|2026-09-21T22:00:00|", key)
+        self.assertEqual(spec["until"], datetime(2026, 9, 22, 6, 0))
+
+    def test_validation(self):
+        with self.assertRaises(config.ValidationError):
+            self.set_bgm(end="09:00")
+        with self.assertRaises(config.ValidationError):
+            self.set_bgm(sound="")
+        with self.assertRaises(config.ValidationError):
+            self.set_bgm(start="9時")
+        b = self.set_bgm(name="", volume=None, outputs=[])
+        self.assertEqual((b["name"], b["volume"], b["outputs"]), ("時間帯で流す", 0.6, []))
+        self.assertTrue(b["id"])
+        # id は保存後も変わらない（画面から送り直しても同じ回として続ける）
+        self.assertEqual(self.store.update_settings({"bgm": [b]})["bgm"][0]["id"], b["id"])
+
+    def test_sound_must_exist(self):
+        def check(ref):
+            if ref != "user:bgm.mp3":
+                raise FileNotFoundError(ref)
+        self.store.sound_check = check
+        self.set_bgm()
+        with self.assertRaises(config.ValidationError):
+            self.set_bgm(sound="user:nai.mp3")

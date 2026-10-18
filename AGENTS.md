@@ -209,6 +209,9 @@ scripts/install-airplay.sh      # .venv-airplay/ を作り、見つかった機�
   `Scheduler._sync_loops` が毎秒「いま鳴っているべき回」を `Player.sync_loops` に渡す（途中で起動しても残りを鳴らす。
   オフ・削除・全体オフ・禁止時間で止まる。停止ボタンで止めた回は鳴らし直さない）。ふつうの順番待ちとは別に鳴るので、ほかの予定を待たせない。
   AirPlay では補助スクリプトの `--until` で 1 本の流れのままファイルの先頭に戻る（切れ目なし）。この Mac は `afplay -t` を繰り返す。
+- 予定とは別に、設定の「時間帯で流す」（`settings.bgm`: `[{"id","name","enabled","start","end","sound","volume","outputs"}]`）で
+  毎日 start〜end のあいだサウンドを繰り返し流せる。`scheduler.bgm_schedules` が `until` 付きの毎日の予定の形にして `_sync_loops` にだけ渡すので、
+  予定の一覧・タイムライン・次の予定には出ない。保存は `PUT /api/settings {"bgm":[…]}`（一覧ごと送る。サウンドが無ければ 400）。
 
 ## 8. 運用
 

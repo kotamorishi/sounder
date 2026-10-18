@@ -620,6 +620,7 @@ function renderSettings() {
   $('#set-voice-val').textContent = voiceLabel(st.default_voice) || 'システム既定';
   renderDesigned();
   renderCalendarSettings();
+  renderBgmList();
   renderAISettings();
   renderClaudeSettings();
   renderWeatherSettings();
@@ -1342,6 +1343,148 @@ function renderCalendarSettings() {
     + `禁止時間と「すべての予定を鳴らす」の設定にも従います。予定は 5 分ごとに Mac のカレンダーから読み直します（最終 ${when}）。`;
 }
 
+// --- 時間帯で流す（毎日 start〜end のあいだ、サウンドを繰り返し流す。予定・タイムラインには出さない）
+
+let bgmDraft = null;   // 編集中の 1 件（新規は id が空）
+
+function bgmSummary(b) {
+  const parts = [`${SL.shortHM(b.start)}〜${SL.shortHM(b.end)}`, soundLabel(b.sound)];
+  parts.push((b.outputs || []).length ? outputLabel(b.outputs) : 'この Mac');
+  return parts.join(' · ');
+}
+
+function renderBgmList() {
+  const box = $('#bgm-list');
+  box.textContent = '';
+  for (const b of state.settings.bgm || []) {
+    const row = el('div', 'cell bgm-row' + (b.enabled ? '' : ' is-off'));
+    const main = el('button', 'bgm-main');
+    main.type = 'button';
+    main.append(el('span', 'bgm-name', b.name), el('span', 'cell-sub', bgmSummary(b)));
+    main.setAttribute('aria-label', `${b.name}。${bgmSummary(b)}。タップで編集`);
+    main.addEventListener('click', () => openBgm(b));
+    const sw = mkSwitch(!!b.enabled, `${b.name}を流す`, (on) => saveBgmList(
+      (state.settings.bgm || []).map((x) => (x.id === b.id ? { ...x, enabled: on } : x)),
+      on ? `${b.name}をオンにしました` : `${b.name}をオフにしました`));
+    row.append(main, sw);
+    box.append(row);
+  }
+}
+
+function saveBgmList(list, msg) {
+  return saveSettings({ bgm: list }, msg);
+}
+
+function openBgm(b) {
+  const firstSound = ((state.sounds.user || [])[0] || (state.sounds.builtin || [])[0] || {}).ref || '';
+  bgmDraft = b ? JSON.parse(JSON.stringify(b))
+    : { id: '', name: '', enabled: true, start: '09:00', end: '10:00', sound: firstSound,
+        volume: state.settings.default_volume ?? 0.6, outputs: [] };
+  $('#bgm-title').textContent = b ? '時間帯を編集' : '時間帯を追加';
+  $('#bgm-name').value = bgmDraft.name;
+  setSwitch($('#bgm-enabled'), bgmDraft.enabled);
+  $('#bgm-start').value = bgmDraft.start;
+  $('#bgm-end').value = bgmDraft.end;
+  $('#bgm-volume').value = bgmDraft.volume;
+  $('#bgm-delete-block').hidden = !b;
+  renderBgmSounds();
+  renderBgmValues();
+  renderBgmOutputs();
+  openPush('#push-bgm');
+  loadAirplay(false, $('#bgm-output-scan'));
+}
+
+function renderBgmSounds() {
+  const sel = $('#bgm-sound');
+  sel.textContent = '';
+  let known = false;
+  for (const [title, key] of [['アップロードしたファイル', 'user'], ['内蔵', 'builtin'], ['Mac のサウンド', 'system']]) {
+    const items = state.sounds[key] || [];
+    if (!items.length) continue;
+    const g = el('optgroup');
+    g.label = title;
+    for (const x of items) {
+      const o = el('option', null, x.label);
+      o.value = x.ref;
+      if (x.ref === bgmDraft.sound) known = true;
+      g.append(o);
+    }
+    sel.append(g);
+  }
+  if (bgmDraft.sound && !known) {
+    const o = el('option', null, `${soundLabel(bgmDraft.sound)}（見つかりません）`);
+    o.value = bgmDraft.sound;
+    sel.prepend(o);
+  }
+  sel.value = bgmDraft.sound;
+}
+
+function renderBgmValues() {
+  $('#bgm-vol-out').textContent = SL.volumePct(bgmDraft.volume);
+  setRangeFill($('#bgm-volume'));
+  const { start, end } = bgmDraft;
+  $('#bgm-when').textContent = start && end && start !== end
+    ? `毎日 ${SL.shortHM(start)} から ${end < start ? '翌日の ' : ''}${SL.shortHM(end)} まで、繰り返し流します。`
+    : '';
+}
+
+function renderBgmOutputs() {
+  const outs = bgmDraft.outputs || [];
+  $('#bgm-output-block').hidden = !((airplay && airplay.available) || outs.length);
+  outputCells($('#bgm-outputs'), outs, {
+    set: (next) => { bgmDraft.outputs = next; renderBgmOutputs(); },
+    base: () => Number(bgmDraft.volume ?? 0.6),
+    baseLabel: '上の音量と同じ',
+    preview: previewBgm,
+  });
+}
+
+function previewBgm() {
+  if (!bgmDraft.sound) { toast('サウンドを選んでください', true); return; }
+  const outs = bgmDraft.outputs || [];
+  api('POST', '/api/preview', { type: 'sound', sound: bgmDraft.sound, volume: Number(bgmDraft.volume), outputs: outs })
+    .then(() => toast(outs.length ? `${outputLabel(outs)} で再生しました` : '再生しました')).catch(fail);
+}
+
+async function saveBgm() {
+  const b = { ...bgmDraft, name: $('#bgm-name').value.trim(), start: $('#bgm-start').value, end: $('#bgm-end').value };
+  if (!b.sound) { toast('サウンドを選んでください', true); return; }
+  if (!b.start || !b.end) { toast('時刻を入れてください', true); return; }
+  if (b.start === b.end) { toast('止める時刻は、流し始める時刻と違う時刻にしてください', true); return; }
+  const list = (state.settings.bgm || []).slice();
+  const i = list.findIndex((x) => x.id && x.id === b.id);
+  if (i >= 0) list[i] = b; else list.push(b);
+  const before = state.settings;
+  await saveBgmList(list, '保存しました');
+  if (state.settings !== before) { bgmDraft = null; closePush($('#push-bgm')); }
+}
+
+async function deleteBgm() {
+  const b = bgmDraft;
+  if (!(await confirmSheet(`「${b.name}」を削除しますか？`, '削除'))) return;
+  const before = state.settings;
+  await saveBgmList((state.settings.bgm || []).filter((x) => x.id !== b.id), '削除しました');
+  if (state.settings !== before) { bgmDraft = null; closePush($('#push-bgm')); }
+}
+
+async function uploadBgmSound(file) {
+  if (!file) return;
+  const btn = $('#bgm-upload-btn');
+  btn.disabled = true;
+  btn.textContent = `${file.name} を追加中…`;
+  try {
+    const data = await uploadSound(file);
+    state.sounds = data.sounds;
+    bgmDraft.sound = data.sound.ref;
+    renderBgmSounds();
+    renderSounds();
+    toast(`${data.sound.label} を追加しました`);
+  } catch (e) { toast(`${file.name}: ${e.message}`, true); }
+  btn.disabled = false;
+  btn.textContent = 'ファイルを追加…';
+  $('#bgm-upload').value = '';
+}
+
 // --- 天気（WeatherKit の補助アプリ）
 function renderWeatherSettings() {
   const w = state.weather || {};
@@ -1679,18 +1822,21 @@ async function deleteSound(s) {
   } catch (e) { fail(e); }
 }
 
+async function uploadSound(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return api('POST', '/api/sounds', { filename: file.name, data: btoa(bin) });
+}
+
 async function uploadFiles(files) {
   for (const file of files) {
     uploadStatus = `${file.name} を追加中…`;
     renderSounds();
     try {
-      const buf = await file.arrayBuffer();
-      let bin = '';
-      const bytes = new Uint8Array(buf);
-      for (let i = 0; i < bytes.length; i += 0x8000) {
-        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-      }
-      const data = await api('POST', '/api/sounds', { filename: file.name, data: btoa(bin) });
+      const data = await uploadSound(file);
       state.sounds = data.sounds;
       uploadStatus = `${data.sound.label} を追加しました`;
       renderSounds();
@@ -1801,13 +1947,13 @@ function fillEditor() {
 // AirPlay の機器（鳴らす場所）。null = まだ聞いていない
 let airplay = null;
 
-async function loadAirplay(refresh) {
+async function loadAirplay(refresh, btn = $('#f-output-scan')) {
   if (airplay && !refresh) return;
-  const btn = $('#f-output-scan');
   if (refresh) { btn.disabled = true; btn.textContent = '探しています…'; }
   try {
     airplay = await api('GET', `/api/airplay${refresh ? '?refresh=1' : ''}`);
     if (draft) renderOutput();
+    if (bgmDraft) renderBgmOutputs();
     if (refresh) toast(`${airplay.devices.length} 台見つかりました`);
   } catch (e) { fail(e); }
   btn.disabled = false;
@@ -1815,19 +1961,28 @@ async function loadAirplay(refresh) {
 }
 
 function renderOutput() {
-  const devices = (airplay && airplay.devices) || [];
   const outs = draft.outputs || [];
   $('#f-output-block').hidden = !((airplay && airplay.available) || outs.length);
+  outputCells($('#f-outputs'), outs, {
+    set: (next) => { draft.outputs = next; renderOutput(); },
+    base: () => Number(draft.action.volume ?? 0.6),
+    baseLabel: '予定と同じ',
+    preview: () => { if (actionType()) previewMain(); },
+  });
+}
+
+// 鳴らす場所のスイッチと、選んだ場所ごとの音量。ctx = { set(outs), base(), baseLabel, preview() }
+function outputCells(box, outs, ctx) {
+  const devices = (airplay && airplay.devices) || [];
   const chosen = new Set(outs.length ? outs.map((o) => o.id) : ['mac']);
   const places = [{ id: 'mac', name: 'この Mac' }].concat(devices);
   for (const o of outs) {
     if (!places.some((p) => p.id === o.id)) places.push({ ...o, missing: true });
   }
-  const box = $('#f-outputs');
   box.textContent = '';
   for (const p of places) {
     const c = el('div', 'cell');
-    const lid = `f-out-${p.id}`;
+    const lid = `${box.id}-${p.id}`;
     const label = el('span', 'cell-label', p.missing ? `${p.name || p.id}（見つかっていません）` : p.name);
     label.id = lid;
     const sw = el('button', 'switch');
@@ -1838,24 +1993,23 @@ function renderOutput() {
     sw.addEventListener('click', () => {
       if (chosen.has(p.id)) chosen.delete(p.id); else chosen.add(p.id);
       if (!chosen.size) { chosen.add('mac'); toast('どこにも鳴らさないことはできないので、この Mac にしました'); }
-      draft.outputs = [...chosen].filter((id) => !(chosen.size === 1 && id === 'mac')).map((id) => {
+      ctx.set([...chosen].filter((id) => !(chosen.size === 1 && id === 'mac')).map((id) => {
         const d = places.find((x) => x.id === id) || {};
         const before = outs.find((o) => o.id === id);
         const o = { id, name: d.name || id, address: d.address || '' };
         if (before && before.volume != null) o.volume = before.volume;
         return o;
-      });
-      renderOutput();
+      }));
     });
     c.append(label, sw);
     box.append(c);
     const out = outs.find((o) => o.id === p.id);
-    if (out) box.append(outputVolumeCell(out, p.id === 'mac'));
+    if (out) box.append(outputVolumeCell(out, p.id === 'mac', ctx));
   }
 }
 
 // 鳴らす場所ごとの音量。指定が無ければ予定の音量（AirPlay の機器は 100% まで）
-function outputVolumeCell(out, isMac) {
+function outputVolumeCell(out, isMac, ctx) {
   const c = el('div', 'cell cell-slider out-vol');
   const label = el('span', 'cell-label');
   const range = el('input');
@@ -1867,13 +2021,13 @@ function outputVolumeCell(out, isMac) {
   const shown = el('output', 'cell-value');
   const show = () => {
     const own = out.volume != null;
-    range.value = own ? out.volume : Math.min(Number(draft.action.volume ?? 0.6), Number(range.max));
-    label.textContent = own ? '音量' : '音量（予定と同じ）';
+    range.value = own ? out.volume : Math.min(ctx.base(), Number(range.max));
+    label.textContent = own ? '音量' : `音量（${ctx.baseLabel}）`;
     shown.textContent = SL.volumePct(range.value);
     setRangeFill(range);
   };
   range.addEventListener('input', () => { out.volume = Number(range.value); show(); });
-  range.addEventListener('change', () => { if (actionType()) previewMain(); });
+  range.addEventListener('change', () => ctx.preview());
   c.append(label, range, shown);
   show();
   return c;
@@ -2509,6 +2663,20 @@ function wire() {
     openPush('#push-voice');
   });
   $('#log-btn').addEventListener('click', () => { renderLog(); openPush('#push-log'); loadLog(); });
+  $('#bgm-add').addEventListener('click', () => openBgm(null));
+  $('#bgm-save').addEventListener('click', saveBgm);
+  $('#bgm-delete').addEventListener('click', deleteBgm);
+  $('#bgm-test').addEventListener('click', previewBgm);
+  $('#bgm-enabled').addEventListener('click', () => { bgmDraft.enabled = !bgmDraft.enabled; setSwitch($('#bgm-enabled'), bgmDraft.enabled); });
+  $('#bgm-sound').addEventListener('change', (e) => { bgmDraft.sound = e.target.value; });
+  $('#bgm-volume').addEventListener('input', (e) => { bgmDraft.volume = Number(e.target.value); renderBgmValues(); if ((bgmDraft.outputs || []).length) renderBgmOutputs(); });
+  $('#bgm-volume').addEventListener('change', previewBgm);
+  for (const id of ['#bgm-start', '#bgm-end']) {
+    $(id).addEventListener('input', () => { bgmDraft.start = $('#bgm-start').value; bgmDraft.end = $('#bgm-end').value; renderBgmValues(); });
+  }
+  $('#bgm-upload-btn').addEventListener('click', () => $('#bgm-upload').click());
+  $('#bgm-upload').addEventListener('change', (e) => uploadBgmSound(e.target.files[0]));
+  $('#bgm-output-scan').addEventListener('click', () => loadAirplay(true, $('#bgm-output-scan')));
   $('#reload-log').addEventListener('click', loadLog);
   $$('[data-back]').forEach((b) => b.addEventListener('click', () => closePush(b.closest('.push'))));
 

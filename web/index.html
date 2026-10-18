@@ -141,6 +141,15 @@
     </div>
 
     <div class="group-block">
+      <h2 class="group-head">時間帯で流す</h2>
+      <div class="group">
+        <div id="bgm-list"></div>
+        <button type="button" class="cell cell-button" id="bgm-add">時間帯を追加</button>
+      </div>
+      <p class="footnote">毎日決まった時間帯のあいだ、サウンド（アップロードした MP3 など）を切れ目なく繰り返し流します。HomePod など AirPlay の機器でも流せます。予定やタイムラインには出ません。全体のオン・オフと禁止時間に従い、停止ボタンで止めるとその日はもう流しません。</p>
+    </div>
+
+    <div class="group-block">
       <h2 class="group-head">既定</h2>
       <div class="group">
         <div class="cell cell-slider">
@@ -393,6 +402,79 @@
         <button type="button" class="cell cell-button" id="d-make">この説明で声を作る</button>
       </div>
       <p class="footnote">年齢・性別・声の高さ・話し方などを言葉で書くと、その声を作ります（日本語でも英語でも書けます）。作るのに 30 秒ほどかかり、できた声は一覧の先頭に出て、Mac で試聴します。</p>
+    </div>
+  </div>
+</div>
+
+<div class="push" id="push-bgm" hidden>
+  <header class="navbar is-solid">
+    <div class="navbar-inner">
+      <button type="button" class="nav-back" data-back>
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>設定
+      </button>
+      <span class="nav-title is-on" id="bgm-title">時間帯で流す</span>
+      <button type="button" class="nav-btn nav-right" id="bgm-save">保存</button>
+    </div>
+  </header>
+  <div class="push-scroll">
+    <div class="group-block">
+      <div class="group">
+        <label class="cell">
+          <span class="cell-label">名前</span>
+          <input type="text" class="cell-input cell-text" id="bgm-name" maxlength="80" placeholder="例）朝の BGM" autocomplete="off">
+        </label>
+        <div class="cell">
+          <span class="cell-label" id="bgm-on-label">流す</span>
+          <button type="button" class="switch" id="bgm-enabled" role="switch" aria-checked="true" aria-labelledby="bgm-on-label"></button>
+        </div>
+      </div>
+    </div>
+    <div class="group-block">
+      <h3 class="group-head">毎日</h3>
+      <div class="group">
+        <label class="cell">
+          <span class="cell-label">流し始める</span>
+          <input type="time" class="cell-input" id="bgm-start">
+        </label>
+        <label class="cell">
+          <span class="cell-label">止める</span>
+          <input type="time" class="cell-input" id="bgm-end">
+        </label>
+      </div>
+      <p class="footnote" id="bgm-when"></p>
+    </div>
+    <div class="group-block">
+      <h3 class="group-head">流すもの</h3>
+      <div class="group">
+        <label class="cell">
+          <span class="cell-label">サウンド</span>
+          <select class="cell-input cell-select" id="bgm-sound"></select>
+        </label>
+        <button type="button" class="cell cell-button" id="bgm-upload-btn">ファイルを追加…</button>
+        <input type="file" id="bgm-upload" accept="audio/*,.mp3,.m4a,.wav,.aiff,.aif,.caf" hidden>
+        <div class="cell cell-slider">
+          <svg class="cell-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/></svg>
+          <input type="range" id="bgm-volume" min="0" max="1.5" step="0.05" aria-label="音量">
+          <output class="cell-value" id="bgm-vol-out"></output>
+          <button type="button" class="play-btn" id="bgm-test" aria-label="試聴">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 4l13 8-13 8z"/></svg>
+          </button>
+        </div>
+      </div>
+      <p class="footnote">試聴は選んだ場所で 1 回だけ鳴らします（長い曲は停止ボタンで止められます）。</p>
+    </div>
+    <div class="group-block" id="bgm-output-block">
+      <h3 class="group-head">流す場所</h3>
+      <div class="group">
+        <div id="bgm-outputs"></div>
+        <button type="button" class="cell cell-button" id="bgm-output-scan">AirPlay の機器を探し直す</button>
+      </div>
+      <p class="footnote">いくつでも選べます。選んだ場所すべてで一斉に流します。つながらない機器があれば、この Mac でも流します。AirPlay の機器の音量はその機器の音量になります（50% でもかなり大きく聞こえます）。その機器で音楽を流していると止まります。</p>
+    </div>
+    <div class="group-block" id="bgm-delete-block">
+      <div class="group">
+        <button type="button" class="cell cell-button is-danger" id="bgm-delete">この時間帯を削除</button>
+      </div>
     </div>
   </div>
 </div>

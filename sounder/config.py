@@ -39,6 +39,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "ai": json.loads(json.dumps(ai_mod.DEFAULTS)),
     # 天気を取る地点（天気の補助アプリ SounderWeather.app が読む）
     "weather": dict(weather_mod.DEFAULTS),
+    # 時間帯で流す（毎日 start〜end のあいだ、サウンドを繰り返し流す）。予定・タイムラインには出さない
+    "bgm": [],
 }
 
 
@@ -132,6 +134,34 @@ def _ids(value: Any, label: str) -> list[str]:
     if not isinstance(value, list) or len(value) > 500 or not all(isinstance(x, str) for x in value):
         raise ValidationError(f"{label}の指定が不正です")
     return [x[:300] for x in dict.fromkeys(value)]
+
+
+def validate_bgm(value: Any) -> list[dict[str, Any]]:
+    """時間帯で流す（BGM）の一覧を検証する。[{"id", "name", "enabled", "start", "end", "sound", "volume", "outputs"}]"""
+    if not isinstance(value, list) or len(value) > 50:
+        raise ValidationError("時間帯で流す設定が不正です")
+    out, seen = [], set()
+    for raw in value:
+        if not isinstance(raw, dict):
+            raise ValidationError("時間帯で流す設定が不正です")
+        bid = str(raw.get("id") or "").strip()[:32] or uuid.uuid4().hex[:12]
+        if bid in seen:
+            bid = uuid.uuid4().hex[:12]
+        seen.add(bid)
+        b = {
+            "id": bid,
+            "name": (raw.get("name") or "").strip()[:80] or "時間帯で流す",
+            "enabled": bool(raw.get("enabled", True)),
+            "start": _time(raw.get("start"), "流し始める時刻"),
+            "end": _time(raw.get("end"), "止める時刻"),
+            "sound": _req_str(raw, "sound", "流すサウンド", 300),
+            "volume": _volume(raw.get("volume"), DEFAULT_SETTINGS["default_volume"]),
+            "outputs": _outputs(raw.get("outputs")),
+        }
+        if b["start"] == b["end"]:
+            raise ValidationError("止める時刻は、流し始める時刻と違う時刻にしてください")
+        out.append(b)
+    return out
 
 
 def validate_schedule(raw: Any, *, keep_id: str | None = None) -> dict[str, Any]:
@@ -347,6 +377,8 @@ def validate_settings(raw: Any, current: dict[str, Any]) -> dict[str, Any]:
             if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                 raise ValidationError("緯度・経度の範囲が不正です")
         out["weather"] = {"name": (w.get("name") or "").strip()[:80], "lat": lat, "lon": lon}
+    if "bgm" in raw:
+        out["bgm"] = validate_bgm(raw["bgm"] or [])
     if "tts_idle_minutes" in raw:
         out["tts_idle_minutes"] = _int_in(raw["tts_idle_minutes"], 0, 1440, "休ませるまでの時間",
                                           current["tts_idle_minutes"])
@@ -496,6 +528,13 @@ class Store:
 
     def update_settings(self, raw: Any) -> dict[str, Any]:
         with self._lock:
-            self._data["settings"] = validate_settings(raw, self._data["settings"])
+            settings = validate_settings(raw, self._data["settings"])
+            if self.sound_check and isinstance(raw, dict) and "bgm" in raw:
+                for b in settings["bgm"]:
+                    try:
+                        self.sound_check(b["sound"])
+                    except Exception as exc:
+                        raise ValidationError(f"「{b['name']}」のサウンドが見つかりません（{exc}）")
+            self._data["settings"] = settings
             self._save_locked()
             return dict(self._data["settings"])

@@ -96,6 +96,23 @@ def loop_end(sched: dict, start: datetime) -> datetime | None:
     return end if end > start else end + timedelta(days=1)
 
 
+def bgm_schedules(settings: dict) -> list[dict]:
+    """設定の「時間帯で流す」を、毎日の「終わりの時刻まで繰り返す」予定の形にする。
+
+    予定の一覧・タイムラインには出さず、_sync_loops だけが使う。
+    """
+    out = []
+    for b in settings.get("bgm") or []:
+        out.append({
+            "id": f"bgm:{b['id']}", "name": b["name"], "enabled": bool(b.get("enabled", True)),
+            "kind": "weekly", "days": list(range(7)), "time": b["start"], "until": b["end"],
+            "action": {"type": "sound", "sound": b["sound"], "repeat": 1,
+                       "volume": b.get("volume", settings.get("default_volume", 0.6))},
+            "outputs": b.get("outputs") or [], "lead_times": [], "source": "bgm",
+        })
+    return out
+
+
 def events_between(sched: dict, lo: datetime, hi: datetime) -> list[tuple[datetime, str, int]]:
     """lo < t <= hi に入る発火時刻を返す。"""
     found = []
@@ -402,7 +419,7 @@ class Scheduler:
             return
         desired, names = {}, {}
         if settings.get("master_enabled", True):
-            for sched in self.all_schedules(settings):
+            for sched in self.all_schedules(settings) + bgm_schedules(settings):
                 if not sched.get("until") or not sched.get("enabled") or in_quiet_hours(settings, now):
                     continue
                 for day in (now.date() - timedelta(days=1), now.date()):

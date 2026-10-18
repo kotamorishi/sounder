@@ -1201,3 +1201,13 @@ details.fold:not([open]) { margin-bottom: 4px; }
   display: grid; place-items: center; padding: 0;
 }
 .notice-check[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* 時間帯で流す */
+.bgm-row { gap: 12px; }
+.bgm-main {
+  flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+  border: 0; background: none; color: inherit; font: inherit; text-align: left; padding: 0;
+}
+.bgm-name { font-size: 17px; }
+.bgm-main .cell-sub { color: var(--ink-2); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bgm-row.is-off .bgm-main { color: var(--ink-off); }
