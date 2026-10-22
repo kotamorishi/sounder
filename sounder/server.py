@@ -474,6 +474,8 @@ class Handler(BaseHTTPRequestHandler):
                 if which == "lead" and s.get("lead_action"):
                     lead = (s.get("lead_times") or [5])[0]
                     action = app.scheduler.action_for(s, "lead", lead, app.store.settings)
+                elif which == "late" and s.get("late_times"):
+                    action = app.scheduler.action_for(s, "late", s["late_times"][0], app.store.settings)
                 else:
                     action = app.scheduler.action_for(s, "main", 0, app.store.settings)
                 app.player.play(action, settings=app.store.settings, label=f"試聴:{s['name']}")

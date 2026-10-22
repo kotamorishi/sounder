@@ -100,7 +100,7 @@ class TestWebLib(unittest.TestCase):
         """編集シートを開き、各子画面・複製・保存用の組み立てまでエラーなく通ること。"""
         after = (
             "openEditor(state.schedules[0]);\n"
-            "['#pg-repeat', '#pg-sound', '#pg-speak', '#pg-lead'].forEach(function (p) {\n"
+            "['#pg-repeat', '#pg-sound', '#pg-speak', '#pg-lead', '#pg-late'].forEach(function (p) {\n"
             "  pushPage(p); popPage();\n"
             "});\n"
             "['weekly', 'monthly', 'yearly', 'once', 'interval'].forEach(function (k) {\n"

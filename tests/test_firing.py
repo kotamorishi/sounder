@@ -89,6 +89,25 @@ class TestFiring(Base):
         self.assertEqual(action["type"], "both")
         self.assertEqual(action["text"], "お出かけまで、あと5分です。")
 
+    def test_late_announces_how_late(self):
+        self.add(name="学校", time="08:37", late_times=[3],
+                 action={"type": "speak", "text": "学校の時間です", "voice": "Kyoko", "volume": 0.4})
+        t = datetime(2026, 9, 21, 8, 39, 59)
+        self.sched._last_tick = t
+        self.sched.tick(t + timedelta(seconds=1))
+        label, action = self.player.played[0]
+        self.assertEqual(label, "学校（3分過ぎたお知らせ）")
+        self.assertEqual((action["type"], action["text"], action["voice"], action["volume"]),
+                         ("both", "学校の時間を、3分過ぎています。", "Kyoko", 0.4))
+
+    def test_without_late_times_nothing_plays_after(self):
+        self.add(time="08:37")
+        t = datetime(2026, 9, 21, 8, 37, 30)
+        self.sched._last_tick = t
+        self.sched.tick(t + timedelta(minutes=5))
+        self.sched.tick(t + timedelta(minutes=5, seconds=1))
+        self.assertEqual(self.player.played, [])
+
     def test_disabled_schedule_is_silent(self):
         self.add(time="08:30", enabled=False)
         t = datetime(2026, 9, 21, 8, 29, 59)

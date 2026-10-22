@@ -4,6 +4,7 @@
 
 const DAY_NAMES = ['月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日', '日曜日'];
 const LEAD_CHOICES = [1, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120];
+const LATE_CHOICES = [1, 2, 3, 5, 10, 15, 20, 30];
 const SOUND_GROUPS = [['ランダム', 'random'], ['内蔵', 'builtin'], ['効果音ラボ', 'effects'],
   ['自分のファイル', 'user'], ['システム', 'system']];
 const LOG_LABELS = { fired: '再生', error: 'エラー', missed: '取りこぼし', skipped: 'スキップ', test: '試聴', info: '情報' };
@@ -261,7 +262,8 @@ function renderBanner() {
     const when = SL.fmtWhen(next.at);
     const soon = SL.parseLocal(next.at) - new Date() < 86400000 && rel;
     text.append(phrased('span', 'banner-sub', soon ? ['次は', ` ${rel}`, ` · ${when}`] : ['次は', ` ${when}`]),
-      phrased('span', 'banner-main', next.tag === 'lead' ? [next.name, `（${next.lead}分前の予告）`] : [next.name]));
+      phrased('span', 'banner-main', next.tag === 'lead' ? [next.name, `（${next.lead}分前の予告）`]
+        : next.tag === 'late' ? [next.name, `（${next.lead}分過ぎたお知らせ）`] : [next.name]));
     const warn = SL.nextNote(next, st);
     if (warn) {
       box.classList.add('is-quiet');
@@ -348,6 +350,7 @@ function alarmRow(s) {
   main.append(phrased('span', 'alarm-label', labelParts));
   const detailParts = whatParts(s.action);
   if (s.lead_times && s.lead_times.length) detailParts.push(` · ${SL.leadLabel(s.lead_times)}に予告`);
+  if (s.late_times && s.late_times.length) detailParts.push(` · ${SL.lateLabel(s.late_times)}に過ぎたお知らせ`);
   if (s.outing) detailParts.push(' · 天気と服装も');
   if (s.until) detailParts.push(` · ${SL.shortHM(s.until)} まで流し続ける`);
   if ((s.outputs || []).length) detailParts.push(` · ${outputLabel(s.outputs)}で鳴らす`);
@@ -839,7 +842,7 @@ function renderTimeline(scroll) {
   const items = [];
   const leadsByMain = {};
   for (const e of events) {
-    if (e.tag === 'lead') (leadsByMain[`${e.schedule_id}|${e.main_at}`] ||= []).push(e);
+    if (e.tag === 'lead' || e.tag === 'late') (leadsByMain[`${e.schedule_id}|${e.main_at}`] ||= []).push(e);
   }
   const chimeRows = {};
   for (const e of events) {
@@ -853,8 +856,8 @@ function renderTimeline(scroll) {
       items.push({ min: span ? minOf(e.starts_at) : minOf(e.at), span,
         end: endsToday ? minOf(e.ends_at) : null,
         node: tlCard(e, leadsByMain[`${e.schedule_id}|${e.at}`] || [], byId[e.schedule_id]) });
-    } else if (e.tag === 'lead' && e.kind !== 'interval' && e.main_at.slice(0, 10) !== tlDay) {
-      // 本番が翌日（0 時台）の予告は単独で出す
+    } else if ((e.tag === 'lead' || e.tag === 'late') && e.kind !== 'interval' && e.main_at.slice(0, 10) !== tlDay) {
+      // 本番が翌日（0 時台）の予告・本番が前日の過ぎたお知らせは単独で出す
       items.push({ min: minOf(e.at), node: tlLeadOnly(e, byId[e.schedule_id]) });
     }
   }
@@ -932,7 +935,7 @@ function renderTimeline(scroll) {
   }
   for (const e of events) {
     const muted = SL.eventState(e, tlMaster)[1];
-    const dot = el('span', 'tl-dot' + (e.tag === 'lead' ? ' is-lead' : '') + (e.past ? ' is-past' : '')
+    const dot = el('span', 'tl-dot' + (e.tag !== 'main' ? ' is-lead' : '') + (e.past ? ' is-past' : '')
       + (muted ? ' is-muted' : ''));
     dot.style.top = `${yOf(minOf(e.at))}px`;
     axis.append(dot);
@@ -987,7 +990,7 @@ function tlCard(e, leads, sched) {
     const pills = el('div', 'tl-pills');
     for (const l of leads) {
       const lm = SL.eventState(l, tlMaster)[1];
-      pills.append(el('span', 'tl-pill-s' + (lm ? ' is-muted' : ''), `${hmAt(l.at)} 予告`));
+      pills.append(el('span', 'tl-pill-s' + (lm ? ' is-muted' : ''), `${hmAt(l.at)} ${l.tag === 'late' ? '過ぎたお知らせ' : '予告'}`));
     }
     b.append(pills);
   }
@@ -1007,9 +1010,10 @@ function tlLeadOnly(e, sched) {
   const wrap = el('div', 'tl-chimes');
   const b = el('button', 'tl-chime' + (e.past ? ' is-past' : '') + (muted ? ' is-muted' : ''));
   b.type = 'button';
-  b.append(icon(muted && e.quiet ? 'moon' : 'bell', 14), el('b', null, `${hmAt(e.at)} 予告`),
+  const what = e.tag === 'late' ? '過ぎたお知らせ' : '予告';
+  b.append(icon(muted && e.quiet ? 'moon' : 'bell', 14), el('b', null, `${hmAt(e.at)} ${what}`),
     el('span', 'n', `${e.name}（${hmAt(e.main_at)}）`));
-  b.setAttribute('aria-label', `${hmAt(e.at)} ${e.name}の予告${msg ? '、' + msg : ''}`);
+  b.setAttribute('aria-label', `${hmAt(e.at)} ${e.name}の${what}${msg ? '、' + msg : ''}`);
   if (msg) b.title = msg;
   b.addEventListener('click', () => openOccurrence(e, sched));
   wrap.append(b);
@@ -1204,8 +1208,8 @@ async function stopSound() {
 
 async function testSchedule(id, which) {
   try {
-    await api('POST', `/api/schedules/${id}/test`, { which: which === 'lead' ? 'lead' : 'main' });
-    toast(which === 'lead' ? '予告を鳴らしました' : '鳴らしました');
+    await api('POST', `/api/schedules/${id}/test`, { which: which === 'lead' || which === 'late' ? which : 'main' });
+    toast(which === 'lead' ? '予告を鳴らしました' : which === 'late' ? '過ぎたお知らせを鳴らしました' : '鳴らしました');
     watchPlaying();
   } catch (e) { fail(e); }
 }
@@ -1859,7 +1863,7 @@ function blank() {
     date: SL.isoDate(now),
     days: [0, 1, 2, 3, 4], every_minutes: 60,
     day_of_month: String(now.getDate()), month: String(now.getMonth() + 1),
-    window: { start: '09:00', end: '21:00' }, lead_times: [], note: '', skip: [], outing: false,
+    window: { start: '09:00', end: '21:00' }, lead_times: [], late_times: [], note: '', skip: [], outing: false,
     action: {
       type: 'sound', sound: 'builtin:doorbell',
       volume: state.settings.default_volume ?? 0.6, repeat: 1,
@@ -1889,6 +1893,7 @@ function openEditor(sched, opts = {}) {
   draft.month = String(draft.month ?? b.month);
   if (!draft.days || !draft.days.length) draft.days = draft.kind === 'interval' ? [0, 1, 2, 3, 4, 5, 6] : b.days;
   draft.lead_times = draft.lead_times || [];
+  draft.late_times = draft.late_times || [];
   draft.skip = draft.skip || [];
   if (!draft.action.sound) draft.action.sound = b.action.sound;
   draft._sound = draft.action.type !== 'speak';
@@ -2062,6 +2067,9 @@ function renderEditorValues() {
   $('#v-lead').textContent = hasLeads ? SL.leadLabel(draft.lead_times) : 'なし';
   $$('#editor [data-leads-only]').forEach((e) => { e.hidden = !hasLeads; });
   $('#v-lead-sound').textContent = soundLabel(draft.lead_action.sound);
+  $('#f-late-block').hidden = draft.kind === 'interval';
+  $('#v-late').textContent = draft.late_times.length ? SL.lateLabel(draft.late_times) : 'なし';
+  $('#f-late-test').hidden = !draft.late_times.length;
 }
 
 function pushPage(id) {
@@ -2070,6 +2078,7 @@ function pushPage(id) {
   if (id === '#pg-repeat') renderRepeatPage();
   if (id === '#pg-speak') renderSpeakPage();
   if (id === '#pg-lead') renderLeadPage();
+  if (id === '#pg-late') renderLatePage();
   next.querySelector('.sheet-scroll').scrollTop = 0;
   cur.classList.remove('is-current');
   cur.classList.add('is-behind');
@@ -2246,6 +2255,24 @@ function renderLeadPage() {
   box.querySelectorAll('.check-cell').forEach((c, i) => { if (i) c.setAttribute('role', 'menuitemcheckbox'); });
 }
 
+// --- 子画面: 過ぎたお知らせ
+function renderLatePage() {
+  const box = $('#f-lates');
+  box.textContent = '';
+  box.append(checkCell('なし', !draft.late_times.length, () => { draft.late_times = []; renderLatePage(); }));
+  for (const m of LATE_CHOICES) {
+    box.append(checkCell(`${m}分後`, draft.late_times.includes(m), () => {
+      const set = new Set(draft.late_times);
+      if (set.has(m)) set.delete(m);
+      else if (set.size >= 8) { toast('過ぎたお知らせは 8 つまでです', true); return; }
+      else set.add(m);
+      draft.late_times = Array.from(set).sort((x, y) => x - y);
+      renderLatePage();
+    }));
+  }
+  box.querySelectorAll('.check-cell').forEach((c, i) => { if (i) c.setAttribute('role', 'menuitemcheckbox'); });
+}
+
 function actionType() {
   if (draft._sound && draft._speak) return 'both';
   if (draft._speak) return 'speak';
@@ -2267,6 +2294,7 @@ function collect() {
     enabled: draft.enabled !== false,
     kind, note: $('#f-note').value.trim(),
     lead_times: draft.lead_times,
+    late_times: kind === 'interval' ? [] : draft.late_times,
     skip: kind === 'once' ? [] : draft.skip,
     outing: !!draft.outing,
     outputs: draft.outputs || [],
@@ -2362,6 +2390,16 @@ function previewLead() {
     api('POST', '/api/preview', { type: 'sound', sound: draft.lead_action.sound, volume: Number(a.volume) })
       .then(() => toast('予告を再生しました')).catch(fail);
   }
+}
+
+function previewLate() {
+  const a = draft.action;
+  const m = draft.late_times[0] || 3;
+  api('POST', '/api/preview', {
+    type: 'both', sound: 'builtin:alarm',
+    text: `${$('#f-name').value.trim() || 'その予定'}の時間を、${m}分過ぎています。`,
+    voice: a.voice, volume: Number(a.volume), outputs: draft.outputs || [],
+  }).then(() => toast('過ぎたお知らせを再生しました')).catch(fail);
 }
 
 // ---------------------------------------------------------------- よく使う型
@@ -2769,6 +2807,7 @@ function wire() {
     if (draft.lead_action.speak_remaining) previewLead();
   });
   $('#f-lead-test').addEventListener('click', previewLead);
+  $('#f-late-test').addEventListener('click', previewLate);
   $('#f-output-scan').addEventListener('click', () => loadAirplay(true));
   $('#f-outing').addEventListener('click', () => {
     draft.outing = !draft.outing;

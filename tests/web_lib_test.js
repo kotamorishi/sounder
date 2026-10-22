@@ -75,6 +75,8 @@ eq(SL.describeRecurrence({ kind: 'weekly', time: '08:15', days: [0, 1, 2, 3, 4],
    '平日 08:15', 'describeRecurrence 毎週');
 eq(SL.describeRecurrence({ kind: 'weekly', time: '08:15', days: [0], lead_times: [10, 5] }),
    '月曜 08:15（10分前・5分前に予告）', 'describeRecurrence 予告つき');
+eq(SL.describeRecurrence({ kind: 'weekly', time: '08:37', days: [0], late_times: [3, 5] }),
+   '月曜 08:37（3分後・5分後に過ぎたお知らせ）', 'describeRecurrence 過ぎたお知らせ');
 eq(SL.describeRecurrence({ kind: 'monthly', time: '10:00', day_of_month: '25' }),
    '毎月25日 10:00', 'describeRecurrence 毎月');
 eq(SL.describeRecurrence({ kind: 'monthly', time: '10:00', day_of_month: 'last' }),
@@ -135,6 +137,8 @@ eq(SL.onceLabel(''), '', 'onceLabel 空');
 eq(SL.onceLabel('めちゃくちゃ'), '', 'onceLabel 不正');
 eq(SL.leadLabel([10, 5]), '10分前・5分前', 'leadLabel');
 eq(SL.leadLabel(null), '', 'leadLabel なし');
+eq(SL.lateLabel([2, 5]), '2分後・5分後', 'lateLabel');
+eq(SL.lateLabel(null), '', 'lateLabel なし');
 eq(SL.dateRule({ kind: 'monthly', day_of_month: 25 }), '毎月25日', 'dateRule 毎月');
 eq(SL.dateRule({ kind: 'monthly', day_of_month: 'last' }), '毎月末', 'dateRule 毎月末');
 eq(SL.dateRule({ kind: 'yearly', month: 1, day_of_month: 1 }), '毎年1月1日', 'dateRule 毎年');
@@ -254,6 +258,10 @@ eq(byDate['2026-09-21'][0].main_at, '2026-09-21T08:15:00', 'eventsByDate 予告�
 eq(byDate['2026-09-21'][2].main_at, '2026-09-22T00:10:00', 'eventsByDate 日付をまたぐ本番時刻');
 eq(byDate['2026-09-22'].map(function (e) { return e.tag; }), ['lead', 'main'], 'eventsByDate 同時刻は予告が先');
 eq(SL.eventsByDate(null), {}, 'eventsByDate 空');
+var lateByDate = SL.eventsByDate([{ date: '2026-09-21', events: [
+  { at: '2026-09-22T00:02:00', tag: 'late', lead: 5 },   // 23:57 の 5 分後は翌日
+] }]);
+eq(lateByDate['2026-09-22'][0].main_at, '2026-09-21T23:57:00', 'eventsByDate 過ぎたお知らせの本番時刻');
 
 eq(SL.pastWarning({ kind: 'once', date: '2026-09-23', time: '08:00' }, NOW),
    'この日時はもう過ぎています。保存しても鳴りません。', 'pastWarning 過去');

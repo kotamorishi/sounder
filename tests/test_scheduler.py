@@ -32,6 +32,21 @@ class TestOccurrences(unittest.TestCase):
         got = [(w.strftime("%H:%M"), tag, lead) for w, tag, lead in scheduler.events_between(s, lo, hi)]
         self.assertEqual(got, [("08:20", "lead", 10), ("08:25", "lead", 5), ("08:30", "main", 0)])
 
+    def test_late_times_fire_after_main(self):
+        s = sched(time="08:37", late_times=[5, 2, 3, 2])
+        self.assertEqual(s["late_times"], [2, 3, 5])
+        lo = datetime(2026, 9, 21, 8, 0)
+        hi = datetime(2026, 9, 21, 9, 0)
+        got = [(w.strftime("%H:%M"), tag, lead) for w, tag, lead in scheduler.events_between(s, lo, hi)]
+        self.assertEqual(got, [("08:37", "main", 0), ("08:39", "late", 2),
+                               ("08:40", "late", 3), ("08:42", "late", 5)])
+        self.assertIn("2分後・3分後・5分後に過ぎたお知らせ", scheduler.describe(s))
+
+    def test_late_times_are_dropped_for_interval(self):
+        s = sched(kind="interval", every_minutes=60, window={"start": "09:00", "end": "12:00"},
+                  late_times=[3])
+        self.assertEqual(s["late_times"], [])
+
     def test_lead_can_cross_into_previous_day(self):
         s = sched(time="00:10", days=[1], lead_times=[30])  # 火曜 0:10、30分前=月曜 23:40
         lo = datetime(2026, 9, 21, 23, 0)   # 月曜

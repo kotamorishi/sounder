@@ -241,6 +241,15 @@ def validate_schedule(raw: Any, *, keep_id: str | None = None) -> dict[str, Any]
         raise ValidationError("事前予告は 8 件までです")
     s["lead_times"] = sorted({_int_in(m, 1, 720, "事前予告（分）") for m in leads}, reverse=True)
 
+    # 過ぎたお知らせ（学校の時間を 3 分過ぎても出ていないときなど）。一定間隔の予定では使わない
+    lates = raw.get("late_times") or []
+    if not isinstance(lates, list):
+        raise ValidationError("過ぎたお知らせの形式が不正です")
+    if len(lates) > 8:
+        raise ValidationError("過ぎたお知らせは 8 件までです")
+    s["late_times"] = (sorted({_int_in(m, 1, 120, "過ぎたお知らせ（分）") for m in lates})
+                       if kind != "interval" else [])
+
     act = raw.get("action") or {}
     atype = act.get("type", "sound")
     if atype not in ACTION_TYPES:

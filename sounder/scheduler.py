@@ -18,6 +18,8 @@ DEFAULT_GRACE = 120.0
 # 読み上げを何秒前から作り始めるか（Qwen3-TTS は 1 文に数秒かかる）と、その見回り間隔
 PREFETCH_AHEAD = 180.0
 PREFETCH_EVERY = 30.0
+# 「○分過ぎています」の前に鳴らす音（遅れているので少し急かす音）
+LATE_SOUND = "builtin:alarm"
 # 機械学習の声のエンジンを休ませるかどうかの見回り間隔
 IDLE_CHECK_EVERY = 60.0
 
@@ -45,7 +47,8 @@ def day_occurrences(sched: dict, day: date, *, ignore_skip: bool = False
                     ) -> list[tuple[datetime, str, int]]:
     """その日が基準日となる発火時刻を (時刻, 種別, 予告分) で返す。
 
-    種別は "main" か "lead"。予告は基準時刻より前なので、前日にまたがることもある。
+    種別は "main" か "lead"（予告）か "late"（過ぎたお知らせ。予告分の欄は何分後か）。
+    予告は基準時刻より前なので前日に、過ぎたお知らせは翌日にまたがることもある。
     お休みの日（sched["skip"] の暦で休み）は何も返さない。予告も一緒に鳴らさない。
     """
     if not ignore_skip and (daysoff.off_reason(sched.get("skip"), day)
@@ -85,7 +88,18 @@ def day_occurrences(sched: dict, day: date, *, ignore_skip: bool = False
         out.append((m, "main", 0))
         for lead in sched.get("lead_times") or []:
             out.append((m - timedelta(minutes=lead), "lead", lead))
+        for late in sched.get("late_times") or []:
+            out.append((m + timedelta(minutes=late), "late", late))
     return out
+
+
+def event_label(name: str, tag: str, lead: int) -> str:
+    """ログと再生の記録に出す名前。"""
+    if tag == "lead":
+        return f"{name}（{lead}分前の予告）"
+    if tag == "late":
+        return f"{name}（{lead}分過ぎたお知らせ）"
+    return name
 
 
 def loop_end(sched: dict, start: datetime) -> datetime | None:
@@ -169,7 +183,7 @@ def outcome(sched: dict, when: datetime, tag: str, lead: int,
 
     Scheduler._fire が残すログ（予定 id・名前・時刻）と突き合わせる。見つからなければ None。
     """
-    label = f"{sched['name']}（{lead}分前の予告）" if tag == "lead" else sched["name"]
+    label = event_label(sched["name"], tag, lead)
     stamp = f"{when:%m/%d %H:%M}"
     for e in log_entries:
         level = e.get("level")
@@ -223,8 +237,9 @@ def calendar_days(schedules: list[dict], start: date, days: int,
                     "lead": lead,
                     "enabled": bool(s.get("enabled")),
                     "kind": s["kind"],
-                    "action_type": "sound" if tag == "lead" else s["action"]["type"],
+                    "action_type": {"lead": "sound", "late": "both"}.get(tag, s["action"]["type"]),
                     "sound": ((s.get("lead_action") or {}) if tag == "lead"
+                              else {"sound": LATE_SOUND} if tag == "late"
                               else s["action"]).get("sound"),
                     "quiet": in_quiet_hours(settings, when),
                     "past": when <= now,
@@ -299,6 +314,8 @@ def describe(sched: dict) -> str:
         base = f"{describe_days(sched['days'])} {w['start']}〜{w['end']} の {sched['every_minutes']}分ごと"
     if sched.get("lead_times"):
         base += "（" + "・".join(f"{m}分前" for m in sched["lead_times"]) + "に予告）"
+    if sched.get("late_times"):
+        base += "（" + "・".join(f"{m}分後" for m in sched["late_times"]) + "に過ぎたお知らせ）"
     if sched.get("skip"):
         base += "（" + describe_skip(sched["skip"]) + "）"
     return base
@@ -497,7 +514,7 @@ class Scheduler:
         if tag == "main" and sched.get("until"):
             return   # 繰り返しの本番は _sync_loops が鳴らす（予告はふつうに鳴らす）
         name = sched["name"]
-        label = f"{name}（{lead}分前の予告）" if tag == "lead" else name
+        label = event_label(name, tag, lead)
         if sched.get("source") == "calendar":
             label = f"カレンダー: {name}"
         behind = (now - when).total_seconds()
@@ -532,6 +549,14 @@ class Scheduler:
         """鳴らす中身。when はその回の時刻（予告なら予告の時刻）。お出かけ参考情報もここで足す。"""
         if tag == "main":
             action = sched["action"]
+        elif tag == "late":
+            # 「学校の時間を、3分過ぎています。」声と音量は本番に合わせる
+            main = sched["action"]
+            action = {"type": "both", "sound": LATE_SOUND,
+                      "text": f"{sched['name']}の時間を、{lead}分過ぎています。",
+                      "voice": main.get("voice") or settings.get("default_voice"),
+                      "rate": main.get("rate") or settings.get("speak_rate", 180),
+                      "volume": main.get("volume", settings.get("default_volume")), "repeat": 1}
         else:
             action = dict(sched.get("lead_action") or {"type": "sound", "sound": "builtin:melody_notice"})
             if action.pop("speak_remaining", False):
@@ -542,7 +567,7 @@ class Scheduler:
                           "volume": action.get("volume", settings.get("default_volume")), "repeat": 1}
         if sched.get("outputs"):
             action = {**action, "outputs": sched["outputs"]}   # 鳴らす場所（AirPlay など）。予告も同じ場所で
-        if sched.get("outing") and self.weather:
+        if sched.get("outing") and self.weather and tag != "late":
             # 出かける時刻（予告なら本番の時刻）からの天気と服装を、読み上げのあとに足す
             when = when or datetime.now()
             leave = when + timedelta(minutes=lead) if tag == "lead" else when

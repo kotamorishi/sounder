@@ -624,6 +624,19 @@
           <p class="footnote">出発前などに、本番より先に短い合図を鳴らします。</p>
         </div>
 
+        <div class="group-block" id="f-late-block">
+          <h3 class="group-head">過ぎたあとのお知らせ</h3>
+          <div class="group">
+            <button type="button" class="cell cell-link" data-push="pg-late">
+              <span class="cell-label">過ぎたお知らせ</span>
+              <span class="cell-value" id="v-late"></span>
+              <svg class="chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+            </button>
+            <button type="button" class="cell cell-button" id="f-late-test">過ぎたお知らせを試聴</button>
+          </div>
+          <p class="footnote">時刻を過ぎたあとに「○○の時間を、3分過ぎています。」と読み上げます（声と音量は本番と同じ）。</p>
+        </div>
+
         <div class="group-block" id="f-outing-block" hidden>
           <h3 class="group-head">お出かけ参考情報</h3>
           <div class="group">
@@ -778,6 +791,23 @@
             </div>
           </div>
           <div id="f-voice-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 子画面: 過ぎたお知らせ -->
+    <div class="sheet-page" id="pg-late">
+      <header class="sheet-nav">
+        <button type="button" class="nav-back" data-pop>
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>戻る
+        </button>
+        <h2 class="sheet-title">過ぎたお知らせ</h2>
+        <span class="nav-spacer"></span>
+      </header>
+      <div class="sheet-scroll">
+        <div class="group-block">
+          <div class="group" id="f-lates"></div>
+          <p class="footnote">いくつでも選べます（8 つまで）。お休みの日や「この日だけ鳴らさない」日は鳴りません。</p>
         </div>
       </div>
     </div>

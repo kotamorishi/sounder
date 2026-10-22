@@ -60,6 +60,12 @@ class TestValidation(unittest.TestCase):
         self.bad("形式", lead_times={"10": True})
         self.bad("8 件", lead_times=[1, 2, 3, 4, 5, 6, 7, 8, 9])
 
+    def test_late_times_are_checked(self):
+        self.bad("形式", late_times="3")
+        self.bad("8 件", late_times=[1, 2, 3, 4, 5, 6, 7, 8, 9])
+        self.bad("範囲", late_times=[0])
+        self.assertEqual(config.validate_schedule(raw())["late_times"], [])
+
     def test_unknown_action_type(self):
         self.bad("動作の種別", action={"type": "dance"})
 

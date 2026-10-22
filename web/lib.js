@@ -118,6 +118,9 @@
     if ((d.lead_times || []).length) {
       base += '（' + d.lead_times.map(function (m) { return m + '分前'; }).join('・') + 'に予告）';
     }
+    if ((d.late_times || []).length) {
+      base += '（' + lateLabel(d.late_times) + 'に過ぎたお知らせ）';
+    }
     if (d.kind !== 'once' && skipLabel(d.skip)) base += '（' + skipLabel(d.skip) + '）';
     return base;
   }
@@ -209,6 +212,10 @@
 
   function leadLabel(leads) {
     return (leads || []).map(function (m) { return m + '分前'; }).join('・');
+  }
+
+  function lateLabel(lates) {
+    return (lates || []).map(function (m) { return m + '分後'; }).join('・');
   }
 
   /** 毎月・毎年の日付 '毎月25日' / '毎月末' / '毎年1月1日' / '毎年2月末' */
@@ -324,14 +331,15 @@
   }
 
   /** /api/calendar の days を、発火時刻の日付ごとに振り分け直す。
-      0 時台の予定の予告は前日に鳴るので、前日の欄に入れる。予告には本番の時刻 main_at を付ける。 */
+      0 時台の予定の予告は前日に鳴るので、前日の欄に入れる（過ぎたお知らせは翌日にまたがることがある）。
+      予告と過ぎたお知らせには本番の時刻 main_at を付ける。 */
   function eventsByDate(days) {
     var out = {};
     (days || []).forEach(function (d) {
       d.events.forEach(function (e) {
         var ev = Object.assign({}, e);
-        if (e.tag === 'lead') {
-          var m = new Date(parseLocal(e.at).getTime() + e.lead * 60000);
+        if (e.tag === 'lead' || e.tag === 'late') {
+          var m = new Date(parseLocal(e.at).getTime() + (e.tag === 'lead' ? 1 : -1) * e.lead * 60000);
           ev.main_at = isoDate(m) + 'T' + pad2(m.getHours()) + ':' + pad2(m.getMinutes()) + ':00';
         } else {
           ev.main_at = e.at;
@@ -363,7 +371,7 @@
     domOptions: domOptions, monthOptions: monthOptions, intervalOptions: intervalOptions,
     domHint: domHint,
     SECTIONS: SECTIONS, shortHM: shortHM, daysLabel: daysLabel, onceLabel: onceLabel,
-    leadLabel: leadLabel, dateRule: dateRule, repeatSummary: repeatSummary, rowTime: rowTime,
+    leadLabel: leadLabel, lateLabel: lateLabel, dateRule: dateRule, repeatSummary: repeatSummary, rowTime: rowTime,
     rowLabelParts: rowLabelParts, sortKey: sortKey, inQuiet: inQuiet, quietState: quietState,
     nextNote: nextNote, eventState: eventState, eventsByDate: eventsByDate,
     pastWarning: pastWarning, foldText: foldText, matchText: matchText,
