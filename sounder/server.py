@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from . import scheduler as sched_mod
 from . import ai as ai_mod
-from . import calendarfeed, claudetasks, daysoff, neural, tones
+from . import calendarfeed, claudetasks, daysoff, neural, outingtalk, tones
 from . import airplay as airplay_mod
 from . import weather as weather_mod
 from . import config as config_mod
@@ -91,8 +91,9 @@ class App:
             {d: f"臨時休校（{why}）" for d, why in self.closures.closed_days().items()})
         self.ai = ai_mod.AI(self.calendar, log=self.log, store=self.store, weather=self.weather,
                             closures=self.closures)
+        self.talk = outingtalk.OutingTalk(self.ai, home / "data" / "outing-talk.json", log=self.log)
         self.scheduler = Scheduler(self.store, self.player, self.log, feed=self.calendar,
-                                   extra_feeds=[self.ai], weather=self.weather)
+                                   extra_feeds=[self.ai], weather=self.weather, talk=self.talk)
         self.token = token
         self.started_at = datetime.now()
         self._pick_default_voice()
@@ -525,6 +526,9 @@ class Handler(BaseHTTPRequestHandler):
                 "volume": body.get("volume", app.store.settings["default_volume"]),
                 "repeat": 1,
                 "outputs": config_mod._outputs(body.get("outputs")),   # 鳴らす場所（AirPlay など）
+                # 続けて別の声で読む文（今日のフランス語の試聴など）
+                "then": [{"text": str(p.get("text") or "")[:300], "voice": str(p.get("voice") or "")[:80]}
+                         for p in (body.get("then") or [])[:8] if isinstance(p, dict)],
             }
             if action["type"] in ("sound", "both") and not action.get("sound"):
                 raise ValidationError("サウンドを選んでください")
@@ -659,6 +663,7 @@ class Handler(BaseHTTPRequestHandler):
             "schedules": self._decorate(app.store.schedules()),
             "sounds": app.player.library(),
             "voices": app.player.voices(),
+            "french_voices": app.player.french_voices(),
             "calendars": daysoff.catalog(),
             "calendar_feed": app.calendar.status(),
             "weather": app.weather.status(app.store.settings),

@@ -627,6 +627,7 @@ function renderSettings() {
   renderAISettings();
   renderClaudeSettings();
   renderWeatherSettings();
+  renderOutingSettings();
   const neural = state.voices.filter((v) => 'asleep' in v);
   $('#tts-idle-block').hidden = !neural.length;
   const idle = String(st.tts_idle_minutes ?? 30);
@@ -1511,6 +1512,46 @@ function renderWeatherSettings() {
   a.rel = 'noopener';
   a.textContent = ' Weather のデータについて';
   box.append(a);
+}
+
+const OUTING_DEFAULTS = { rephrase: true, french: false, french_voice: 'Amélie', english_voice: '' };
+
+function saveOuting(patch, msg) {
+  const cur = Object.assign({}, OUTING_DEFAULTS, state.settings.outing || {});
+  return saveSettings({ outing: Object.assign(cur, patch) }, msg);
+}
+
+function renderOutingSettings() {
+  const cfg = Object.assign({}, OUTING_DEFAULTS, state.settings.outing || {});
+  const loc = (state.weather || {}).location || {};
+  if (document.activeElement !== $('#outing-pickup')) $('#outing-pickup').value = loc.pickup || '';
+  setSwitch($('#outing-rephrase'), !!cfg.rephrase);
+  setSwitch($('#outing-french'), !!cfg.french);
+  $$('[data-french-only]').forEach((e) => { e.hidden = !cfg.french; });
+  const voices = (list, prefix, first) => [{ value: '', label: first }]
+    .concat((list || []).filter((v) => (v.locale || '').startsWith(prefix)).map((v) => ({ value: v.name, label: v.label || v.name })));
+  fillSelect($('#outing-french-voice'), voices(state.french_voices, 'fr', '予定と同じ声'), cfg.french_voice || '');
+  if (!cfg.french_voice) $('#outing-french-voice').value = '';
+  fillSelect($('#outing-english-voice'), voices(state.voices, 'en', '予定と同じ声'), cfg.english_voice || '');
+  if (!cfg.english_voice) $('#outing-english-voice').value = '';
+  const ai = state.settings.ai || {};
+  $('#outing-rephrase').disabled = !ai.enabled;
+  $('#outing-rephrase-label').textContent = ai.enabled ? 'AI で毎日言い回しを変える' : 'AI で毎日言い回しを変える（AI 連携がオフ）';
+}
+
+async function previewFrench() {
+  const cfg = Object.assign({}, OUTING_DEFAULTS, state.settings.outing || {});
+  const v = state.settings.default_voice || '';
+  const en = cfg.english_voice || v;
+  const fr = cfg.french_voice || v;
+  try {
+    await api('POST', '/api/preview', {
+      type: 'speak', text: 'Today\'s French word is', voice: en, volume: Number($('#set-volume').value),
+      then: [{ text: 'la citrouille', voice: fr }, { text: 'It means the pumpkin.', voice: en },
+        { text: 'La citrouille est orange.', voice: fr }, { text: 'The pumpkin is orange.', voice: en }],
+    });
+    toast('再生しました');
+  } catch (e) { fail(e); }
 }
 
 async function findWeatherPlace() {
@@ -2582,6 +2623,19 @@ function wire() {
   });
   $('#set-rate').addEventListener('input', (e) => { $('#rate-out').textContent = e.target.value; setRangeFill(e.target); });
   $('#weather-find').addEventListener('click', findWeatherPlace);
+  $('#outing-pickup').addEventListener('change', (e) => saveSettings({ weather: { pickup: e.target.value } },
+    e.target.value ? `帰りの時刻を ${e.target.value} にしました` : '帰りの天気は言いません'));
+  $('#outing-rephrase').addEventListener('click', () => {
+    const on = !isOn($('#outing-rephrase'));
+    saveOuting({ rephrase: on }, on ? 'AI で言い回しを変えます' : 'いつもの言い回しで読みます');
+  });
+  $('#outing-french').addEventListener('click', () => {
+    const on = !isOn($('#outing-french'));
+    saveOuting({ french: on }, on ? '今日のフランス語をオンにしました' : '今日のフランス語をオフにしました');
+  });
+  $('#outing-french-voice').addEventListener('change', (e) => saveOuting({ french_voice: e.target.value }, '保存しました'));
+  $('#outing-english-voice').addEventListener('change', (e) => saveOuting({ english_voice: e.target.value }, '保存しました'));
+  $('#outing-french-test').addEventListener('click', previewFrench);
   $('#weather-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); findWeatherPlace(); } });
   $('#ai-enabled').addEventListener('click', () => {
     const on = !isOn($('#ai-enabled'));

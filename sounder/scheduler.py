@@ -7,7 +7,7 @@ import threading
 import time
 from datetime import date, datetime, timedelta
 
-from . import calendarfeed, daysoff
+from . import calendarfeed, daysoff, outingtalk
 
 DAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"]
 LAST_DAY = "last"
@@ -350,10 +350,11 @@ class Scheduler:
     """1 秒ごとに時計を見て、その間に来た発火時刻を鳴らす。"""
 
     def __init__(self, store, player, log, *, grace: float = DEFAULT_GRACE, feed=None,
-                 extra_feeds=(), weather=None) -> None:
+                 extra_feeds=(), weather=None, talk=None) -> None:
         self.store = store
-        # お出かけ参考情報（予定の outing）に使う天気（weather.Weather）
+        # お出かけ参考情報（予定の outing）に使う天気（weather.Weather）と、言い回し・今日のフランス語（outingtalk.OutingTalk）
         self.weather = weather
+        self.talk = talk
         # 保存していない予定の出どころ。カレンダー連携（calendarfeed.CalendarFeed）や AI の朝のお知らせ（ai.AI）。
         # どれも schedules(settings) で予定を返す。prepare(now, settings) があれば毎回呼ぶ
         self.feed = feed
@@ -509,6 +510,14 @@ class Scheduler:
                 prefetch(self.action_for(sched, tag, lead, settings, when=when), settings=settings)
         if len(self._prefetched) > 4000:
             self._prefetched = set(list(self._prefetched)[-1000:])
+        if self.talk and self.weather:
+            # お出かけの最初のお知らせは、AI に言い回しを早めに作らせておく（action_for が作り始める）
+            for sched in self.all_schedules(settings):
+                if not sched.get("enabled") or not sched.get("outing"):
+                    continue
+                for when, tag, lead in events_between(sched, now, now + timedelta(seconds=outingtalk.AHEAD)):
+                    if outingtalk.first_of_the_morning(sched, tag, lead):
+                        self.action_for(sched, tag, lead, settings, when=when)
 
     def _fire(self, sched: dict, when: datetime, tag: str, lead: int, now, settings) -> None:
         if tag == "main" and sched.get("until"):
@@ -571,9 +580,16 @@ class Scheduler:
             # 出かける時刻（予告なら本番の時刻）からの天気と服装を、読み上げのあとに足す
             when = when or datetime.now()
             leave = when + timedelta(minutes=lead) if tag == "lead" else when
-            extra = self.weather.outing(leave)
+            full = outingtalk.first_of_the_morning(sched, tag, lead)
+            extra = self.weather.outing(leave, settings=settings, full=full)
+            then = []
+            if extra and full and self.talk:
+                extra, then = self.talk.get(settings, outingtalk.when_key(sched, leave), extra, leave.date(),
+                                            action.get("voice") or settings.get("default_voice") or "")
             if extra:
                 action = dict(action)
+                if then:
+                    action["then"] = then
                 if action.get("type") in ("speak", "both") and (action.get("text") or "").strip():
                     action["text"] = action["text"].rstrip() + " " + extra
                 else:

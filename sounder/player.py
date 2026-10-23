@@ -224,6 +224,10 @@ class Player:
         extra = [v for e in self.tts for v in e.voices()]
         return [v for v in extra + self._say_voices() if v["locale"].startswith(VOICE_LANGS)]
 
+    def french_voices(self) -> list[dict]:
+        """フランス語の say の声（「今日のフランス語」用。ふつうの声の一覧には出さない）。"""
+        return [v for v in self._say_voices() if v["locale"].startswith("fr")]
+
     def sleep_idle_engines(self, idle_seconds: float) -> None:
         """しばらく使っていない機械学習のエンジンを止めて、メモリを空ける。"""
         for e in self.tts:
@@ -233,6 +237,15 @@ class Player:
         return next((e for e in self.tts if e.handles(voice)), None)
 
     def _say_voices(self) -> list[dict]:
+        """say の声の一覧。画面の更新のたびに呼ばれるので、1 分だけ覚えておく。"""
+        cached = getattr(self, "_say_cache", None)
+        if cached and cached[0] == self.say and time.monotonic() - cached[1] < 60:
+            return cached[2]
+        voices = self._list_say_voices()
+        self._say_cache = (self.say, time.monotonic(), voices)
+        return voices
+
+    def _list_say_voices(self) -> list[dict]:
         if not self.say:
             return []
         try:
@@ -493,21 +506,27 @@ class Player:
         if atype in ("speak", "both"):
             voice = action.get("voice") or settings.get("default_voice") or ""
             rate = action.get("rate") or settings.get("speak_rate") or 180
-            tmp = None
             self._mark(jid, state="preparing", voice_used=voice)
-            if neural.is_neural(voice):
-                engine = self._engine_for(voice)
-                tmp = engine.render(action["text"], voice, rate) if engine else None
+            # then: 続けて別の声で読む文（「今日のフランス語」の単語はフランス語の声で、など）
+            parts = [(action["text"], voice)] + [(p.get("text") or "", p.get("voice") or voice)
+                                                for p in action.get("then") or []]
+            for text, v in parts:
+                if not text.strip():
+                    continue
+                tmp = None
+                if neural.is_neural(v):
+                    engine = self._engine_for(v)
+                    tmp = engine.render(text, v, rate) if engine else None
+                    if tmp is None:
+                        self._mark(jid, voice_used="say", fallback=True,
+                                   note="選んだ声のエンジンが使えなかったので、標準の声で読みました")
+                    v = ""  # 作れなかったら say のシステム既定の声で代わりに読む
                 if tmp is None:
-                    self._mark(jid, voice_used="say", fallback=True,
-                               note="選んだ声のエンジンが使えなかったので、標準の声で読みました")
-                voice = ""  # 作れなかったら say のシステム既定の声で代わりに読む
-            if tmp is None:
-                tmp = self._say_to_file(action["text"], voice, rate)
-                if tmp is None:
-                    problems.append("読み上げの音声を作れませんでした")
-            if tmp:
-                items.append([self.afplay, "-v", f"{local:.3f}", str(tmp)])
+                    tmp = self._say_to_file(text, v, rate)
+                    if tmp is None:
+                        problems.append("読み上げの音声を作れませんでした")
+                if tmp:
+                    items.append([self.afplay, "-v", f"{local:.3f}", str(tmp)])
 
         if not items:
             self._mark(jid, state="failed", finished=self._now(),
@@ -797,11 +816,13 @@ class Player:
             return
         voice = action.get("voice") or settings.get("default_voice") or ""
         rate = action.get("rate") or settings.get("speak_rate") or 180
-        text = action.get("text") or ""
-        engine = self._engine_for(voice)
-        if engine and text.strip():
-            threading.Thread(target=engine.render, args=(text, voice, rate),
-                             name="tts-prefetch", daemon=True).start()
+        parts = [(action.get("text") or "", voice)] + [(p.get("text") or "", p.get("voice") or voice)
+                                                     for p in action.get("then") or []]
+        for text, v in parts:
+            engine = self._engine_for(v)
+            if engine and text.strip():
+                threading.Thread(target=engine.render, args=(text, v, rate),
+                                 name="tts-prefetch", daemon=True).start()
 
     # --- アップロード -----------------------------------------------------
 

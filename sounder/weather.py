@@ -11,11 +11,16 @@ import json
 import os
 import subprocess
 import threading
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 LABEL = "com.local.sounder-weather"
-DEFAULTS = {"name": "", "lat": None, "lon": None}
+# pickup: 帰り（お迎え）の時刻。お出かけの読み上げで、その時刻の天気も伝える（"" で伝えない）
+DEFAULTS = {"name": "", "lat": None, "lon": None, "pickup": "15:30"}
+# 過去の天気を何日分とっておくか（昨日との比べ・今季いちばんなどに使う）
+HISTORY_DAYS = 400
+# 「今季初」「今季いちばん」と言うのに要る記録の日数（記録が少ないうちは言わない）
+SEASON_MIN_DAYS = 7
 
 # WeatherKit の WeatherCondition → 読み上げやすい日本語
 CONDITIONS = {
@@ -117,13 +122,44 @@ def clothing(info: dict) -> str:
     return "。".join([advice] + extra)
 
 
+def _local(iso: str) -> datetime:
+    return datetime.fromisoformat(iso).astimezone().replace(tzinfo=None)
+
+
+def _hm_words(t: datetime) -> str:
+    """15:30 → 「3時半」、17:58 → 「5時58分」（午後は 12 を引く）。"""
+    h = t.hour % 12 or 12
+    if t.minute == 0:
+        return f"{h}時"
+    return f"{h}時半" if t.minute == 30 else f"{h}時{t.minute}分"
+
+
+def season_start(day: date) -> date:
+    """寒さの「今季」は 8 月から、暖かさの「今季」は 2 月から数える。"""
+    if day.month >= 8:
+        return date(day.year, 8, 1)
+    if day.month >= 2:
+        return date(day.year, 2, 1)
+    return date(day.year - 1, 8, 1)
+
+
+def clock_change(day: date) -> int:
+    """day の 0 時から翌日の 0 時までに時計が何時間動くか（冬時間に戻る日は -1、夏時間は +1）。
+    切り替えは夜中の 2 時なので、朝のお知らせの時点ではもう切り替わっている。"""
+    a = datetime.combine(day, datetime.min.time()).astimezone().utcoffset()
+    b = datetime.combine(day + timedelta(days=1), datetime.min.time()).astimezone().utcoffset()
+    return round((b - a).total_seconds() / 3600)
+
+
 class Weather:
     def __init__(self, path: Path, app_path: Path) -> None:
         self.path = path
         self.app = app_path          # SounderWeather.app/Contents/MacOS/SounderWeather
+        self.history_path = path.with_name("weather-history.json")
         self._lock = threading.Lock()
         self._mtime = None
         self._data: dict = {}
+        self._history: dict | None = None
 
     def data(self) -> dict:
         with self._lock:
@@ -138,7 +174,153 @@ class Weather:
                 except (OSError, ValueError):
                     self._data = {}
                 self._mtime = mtime
+                if self._data.get("status") == "ok":
+                    self._record(self._data)
             return self._data
+
+    # --- 過去の天気の記録（data/weather-history.json）
+    def history(self) -> dict:
+        """{"YYYY-MM-DD": {"feels": {"8": 7.1, ...}, "low", "high", "sunset": "HH:MM", "snow"}}"""
+        if self._history is None:
+            try:
+                self._history = json.loads(self.history_path.read_text("utf-8"))
+            except (OSError, ValueError):
+                self._history = {}
+        return self._history
+
+    def _record(self, d: dict) -> None:
+        """新しい予報で上書きしていく。過ぎた時間は予報から消えるので、最後に見た値（ほぼ実際の値）が残る。"""
+        hist = self.history()
+        for h in d.get("hours") or []:
+            try:
+                at = _local(h["time"])
+            except (KeyError, ValueError):
+                continue
+            feels = h.get("apparent_c", h.get("temperature_c"))
+            if feels is not None:
+                hist.setdefault(at.date().isoformat(), {}).setdefault("feels", {})[str(at.hour)] = feels
+        for x in d.get("days") or []:
+            key = str(x.get("date", ""))[:10]
+            if not key:
+                continue
+            rec = hist.setdefault(key, {})
+            rec.update(low=x.get("low_c"), high=x.get("high_c"),
+                       snow=x.get("condition") in SNOWY_CONDITIONS
+                       or (x.get("precipitation") in SNOWY and (x.get("precipitation_chance") or 0) >= 30))
+            try:
+                rec["sunset"] = _local(x["sunset"]).strftime("%H:%M")
+            except (KeyError, TypeError, ValueError):
+                pass
+        for key in sorted(hist)[:-HISTORY_DAYS]:
+            del hist[key]
+        try:
+            tmp = self.history_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(hist, ensure_ascii=False, sort_keys=True), "utf-8")
+            os.replace(tmp, self.history_path)
+        except OSError:
+            pass
+
+    def compare_yesterday(self, at: datetime) -> str:
+        """「昨日より4度寒いです。」 at の時刻の体感温度を、昨日の同じ時刻と比べる。差が小さければ ""。"""
+        self.data()   # 新しい予報を記録に入れてから比べる
+        hist = self.history()
+        today = (hist.get(at.date().isoformat()) or {}).get("feels", {}).get(str(at.hour))
+        before = (hist.get((at.date() - timedelta(days=1)).isoformat()) or {}).get("feels", {}).get(str(at.hour))
+        if today is None or before is None:
+            return ""
+        diff = round(today - before)
+        if diff <= -3:
+            return f"昨日のこの時間より{-diff}度寒いです。"
+        if diff >= 3:
+            return f"昨日のこの時間より{diff}度暖かいです。"
+        return ""
+
+    def pickup(self, at: datetime, settings: dict) -> str:
+        """帰り（お迎え）の時刻の天気。「帰りの3時半ごろは晴れて14度。朝より暖かいので、上着は手に持って帰れそうです。」"""
+        hm = settings_of(settings).get("pickup") or ""
+        try:
+            back = datetime.combine(at.date(), datetime.strptime(hm, "%H:%M").time())
+        except ValueError:
+            return ""
+        if back <= at + timedelta(hours=1):
+            return ""   # 帰りの時刻のあとに出かける予定には言わない
+        hours = {}
+        for h in self.data().get("hours") or []:
+            try:
+                t = _local(h["time"])
+            except (KeyError, ValueError):
+                continue
+            hours[(t.date(), t.hour)] = h
+        h = hours.get((back.date(), back.hour))
+        if not h:
+            return ""
+        temp = h.get("temperature_c")
+        feels = h.get("apparent_c", temp)
+        text = f"帰りの{_hm_words(back)}ごろは{condition(h.get('condition'))}"
+        text += f"、{round(temp)}度。" if temp is not None else "。"
+        chance = h.get("precipitation_chance") or 0
+        morning = hours.get((at.date(), at.hour)) or {}
+        m_feels = morning.get("apparent_c", morning.get("temperature_c"))
+        kind = "雪" if h.get("precipitation") in SNOWY or h.get("condition") in SNOWY_CONDITIONS else "雨"
+        if chance >= 50 and (morning.get("precipitation_chance") or 0) < 50:
+            text += f"帰りは{kind}になりそうです。"
+        elif feels is not None and m_feels is not None and feels - m_feels >= 6:
+            text += "朝よりずっと暖かくなるので、上着は脱いでも大丈夫そうです。"
+        elif feels is not None and m_feels is not None and m_feels - feels >= 4:
+            text += "朝より寒くなるので、上着を忘れずに持って帰りましょう。"
+        return text
+
+    def season_notes(self, day: date) -> list[str]:
+        """季節の節目の一言。今季いちばんの冷え込み・今季初の氷点下や雪・時計の切り替え・日の入り。"""
+        notes = []
+        self.data()
+        hist = self.history()
+        key = day.isoformat()
+        rec = hist.get(key) or {}
+        start = season_start(day).isoformat()
+        past = [v for k, v in hist.items() if start <= k < key]
+        enough = len(past) >= SEASON_MIN_DAYS
+        low = rec.get("low")
+        if enough and low is not None:
+            lows = [v["low"] for v in past if v.get("low") is not None]
+            highs = [v["high"] for v in past if v.get("high") is not None]
+            cold_season = day.month >= 8 or day.month == 1
+            if low < 0 and lows and all(x >= 0 for x in lows) and cold_season:
+                notes.append(f"今日は今季初めて氷点下まで下がる予報です（最低{round(low)}度）。")
+            elif cold_season and lows and low < min(lows) - 0.5:
+                notes.append(f"今季いちばんの冷え込みです（最低{round(low)}度）。")
+            elif not cold_season and highs and rec.get("high") is not None and rec["high"] > max(highs) + 0.5:
+                notes.append(f"今年いちばんの暖かさになりそうです（最高{round(rec['high'])}度）。")
+        if enough and rec.get("snow") and not any(v.get("snow") for v in past):
+            notes.append("今季初めての雪の予報です。")
+        # 時計の切り替え（d の夜中 2 時に切り替わる。金曜には週末の分、月曜には週末にあった分も言う）
+        for i in range(-3, 4):
+            d = day + timedelta(days=i)
+            change = clock_change(d)
+            if not change:
+                continue
+            which = "冬時間" if change < 0 else "夏時間"
+            move = "1時間戻ります" if change < 0 else "1時間進みます"
+            if i == 0:
+                notes.append(f"今日から{which}です。夜中に時計が{move[:-2]}ました。")
+            elif i == 1:
+                notes.append(f"今夜、時計が{move}。明日から{which}です。")
+            elif i > 1:
+                notes.append(f"{'月火水木金土日'[(d - timedelta(days=1)).weekday()]}曜日の夜、時計が{move}。{which}になります。")
+            else:
+                notes.append(f"{'月火水木金土日'[d.weekday()]}曜日から{which}になりました。")
+            break
+        # 日の入りが、ちょうどの時刻をまたいだ日
+        y = (hist.get((day - timedelta(days=1)).isoformat()) or {}).get("sunset")
+        t = rec.get("sunset")
+        if y and t and y[:2] != t[:2]:
+            h = int(max(y, t)[:2]) % 12 or 12
+            hh, mm = int(t[:2]) % 12 or 12, int(t[3:5])
+            if t < y:
+                notes.append(f"日の入りが{h}時より前になりました。今日は{hh}時{mm}分です。")
+            else:
+                notes.append(f"日の入りが{h}時を過ぎるようになりました。今日は{hh}時{mm}分です。")
+        return notes
 
     def installed(self) -> bool:
         return self.app.is_file()
@@ -228,10 +410,23 @@ class Weather:
             lines.append("風が強い")
         return {**info, "lines": lines, "clothing": clothing(info)}
 
-    def outing(self, at: datetime, hours: int = 6) -> str:
-        """at に出かけるときの一言（その時刻から hours 時間の天気と服装）。天気が分からなければ ""。"""
-        return outing_sentence(self.today(at.date(), start_hour=at.hour,
+    def outing(self, at: datetime, hours: int = 6, settings: dict | None = None, full: bool = True) -> str:
+        """at に出かけるときの一言。天気が分からなければ ""。
+
+        その時刻から hours 時間の天気と服装。full なら、昨日との比べ・帰りの時刻の天気・季節の節目も足して、
+        毎日同じ話にならないようにする（その朝の最初のお知らせだけ。あとの予告は短く）。
+        """
+        base = outing_sentence(self.today(at.date(), start_hour=at.hour,
                                           end_hour=min(24, at.hour + hours)))
+        if not base or not full:
+            return base
+        vs = self.compare_yesterday(at)
+        if vs:   # 体感温度のすぐあとに入れる
+            mark = "度です。"
+            i = base.find(mark)
+            base = base[:i + len(mark)] + vs + base[i + len(mark):] if i >= 0 else vs + base
+        extra = [self.pickup(at, settings or {})] + self.season_notes(at.date())
+        return base + "".join(x for x in extra if x)
 
     def today_lines(self, day: date) -> list[str]:
         return self.today(day).get("lines") or []

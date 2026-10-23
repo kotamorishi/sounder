@@ -1,7 +1,9 @@
 """天気（WeatherKit の補助アプリが書いた weather.json）のテスト。"""
 
 import json
+import os
 import sys
+import time
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta
@@ -150,12 +152,97 @@ class TestOuting(Base):
                          "外は過ごしやすい気温です。体感温度は20度です。にわか雪があるかもしれません。半袖か薄い長袖で大丈夫。")
 
 
+def day_at(day, h, m=0):
+    return datetime.combine(day, datetime.min.time()).replace(hour=h, minute=m)
+
+
+class TestVariety(Base):
+    """毎日同じにならないように足す話（昨日との比べ・帰りの天気・季節の節目）。"""
+
+    def hist(self, records):
+        self.w.history_path.write_text(json.dumps(records))
+        self.w._history = None
+
+    def test_records_history_from_the_forecast(self):
+        self.w.data()
+        h = json.loads(self.w.history_path.read_text())
+        rec = h[TODAY.isoformat()]
+        self.assertEqual(rec["feels"]["8"], 10)
+        self.assertEqual((rec["low"], rec["high"]), (12.2, 21.4))
+
+    def test_compare_with_yesterday(self):
+        y = (TODAY - timedelta(days=1)).isoformat()
+        self.hist({y: {"feels": {"8": 15}}})
+        leave = day_at(TODAY, 8, 35)
+        self.assertEqual(self.w.compare_yesterday(leave), "昨日のこの時間より5度寒いです。")
+        text = self.w.outing(leave, settings={"weather": {"pickup": ""}})
+        self.assertTrue(text.startswith("外は少し涼しいです。体感温度は10度です。昨日のこの時間より5度寒いです。11時ごろ"))
+        # 前の日の記録が無い・差が小さいときは言わない
+        self.hist({y: {"feels": {"8": 11}}})
+        self.assertEqual(self.w.compare_yesterday(leave), "")
+        self.hist({})
+        self.assertEqual(self.w.compare_yesterday(leave), "")
+        # 最初のお知らせでなければ足さない
+        self.hist({y: {"feels": {"8": 15}}})
+        self.assertNotIn("昨日", self.w.outing(leave, full=False))
+
+    def test_pickup_weather(self):
+        d = json.loads(self.path.read_text())
+        d["hours"].append(hour(15, 19, 18, 70, cond="rain"))
+        self.path.write_text(json.dumps(d))
+        leave = day_at(TODAY, 8, 35)
+        self.assertEqual(self.w.pickup(leave, {"weather": {"pickup": "15:30"}}),
+                         "帰りの3時半ごろは雨、19度。帰りは雨になりそうです。")
+        d["hours"][-1] = hour(15, 19, 18, 0, cond="clear")
+        self.path.write_text(json.dumps(d))
+        self.assertEqual(self.w.pickup(leave, {"weather": {"pickup": "15:00"}}),
+                         "帰りの3時ごろは快晴、19度。朝よりずっと暖かくなるので、上着は脱いでも大丈夫そうです。")
+        self.assertEqual(self.w.pickup(leave, {"weather": {"pickup": ""}}), "")
+        self.assertEqual(self.w.pickup(day_at(TODAY, 15), {"weather": {"pickup": "15:30"}}), "")   # 帰りより後
+        self.assertEqual(self.w.pickup(leave, {"weather": {"pickup": "20:00"}}), "")   # 予報が無い時刻
+
+    def test_season_notes(self):
+        day = date(2026, 11, 10)
+        past = {(day - timedelta(days=i)).isoformat(): {"low": 3 + i % 3, "high": 10, "snow": False}
+                for i in range(1, 10)}
+        self.hist({**past, day.isoformat(): {"low": -2, "high": 5, "snow": True}})
+        notes = self.w.season_notes(day)
+        self.assertIn("今日は今季初めて氷点下まで下がる予報です（最低-2度）。", notes)
+        self.assertIn("今季初めての雪の予報です。", notes)
+        self.hist({**past, day.isoformat(): {"low": 1, "high": 5}})
+        self.assertEqual(self.w.season_notes(day), ["今季いちばんの冷え込みです（最低1度）。"])
+        # 記録が少ないうちは「今季初」と言わない
+        self.hist({day.isoformat(): {"low": -2, "snow": True}})
+        self.assertEqual(self.w.season_notes(day), [])
+
+    def test_sunset_crosses_the_hour(self):
+        day = date(2026, 10, 23)
+        self.hist({"2026-10-22": {"sunset": "18:01"}, "2026-10-23": {"sunset": "17:59"}})
+        self.assertIn("日の入りが6時より前になりました。今日は5時59分です。", self.w.season_notes(day))
+        self.hist({"2026-10-22": {"sunset": "18:03"}, "2026-10-23": {"sunset": "18:01"}})
+        self.assertEqual(self.w.season_notes(day), [])
+
+    def test_clock_change(self):
+        os.environ["TZ"] = "America/Toronto"
+        time.tzset()
+        self.addCleanup(lambda: (os.environ.pop("TZ"), time.tzset()))
+        self.assertEqual(weather.clock_change(date(2026, 11, 1)), -1)   # 11 月 1 日の夜中 2 時に戻る
+        self.assertEqual(weather.clock_change(date(2026, 10, 31)), 0)
+        self.assertEqual(weather.clock_change(date(2026, 3, 8)), 1)
+        self.hist({})
+        self.assertIn("土曜日の夜、時計が1時間戻ります。冬時間になります。", self.w.season_notes(date(2026, 10, 30)))
+        self.assertIn("今日から冬時間です。夜中に時計が1時間戻りました。", self.w.season_notes(date(2026, 11, 1)))
+        self.assertIn("今夜、時計が1時間戻ります。明日から冬時間です。", self.w.season_notes(date(2026, 10, 31)))
+        self.assertIn("日曜日から冬時間になりました。", self.w.season_notes(date(2026, 11, 2)))
+        self.assertFalse(any("時計" in n for n in self.w.season_notes(date(2026, 11, 20))))
+
+
 class TestOutingInSchedules(unittest.TestCase):
     class FakeWeather:
         def __init__(self):
             self.asked = []
 
-        def outing(self, at):
+        def outing(self, at, settings=None, full=True):
             self.asked.append(at)
             return "外は寒いです。"
 
@@ -193,7 +280,16 @@ class TestSettings(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"
             config.Store(path).update_settings({"weather": {"name": "Toronto", "lat": "43.65161", "lon": -79.38}})
-            self.assertEqual(config.Store(path).settings["weather"], {"name": "Toronto", "lat": 43.6516, "lon": -79.38})
+            self.assertEqual(config.Store(path).settings["weather"],
+                             {"name": "Toronto", "lat": 43.6516, "lon": -79.38, "pickup": "15:30"})
+            # 帰りの時刻だけ変えても、場所はそのまま
+            config.Store(path).update_settings({"weather": {"pickup": "15:10"}})
+            self.assertEqual(config.Store(path).settings["weather"],
+                             {"name": "Toronto", "lat": 43.6516, "lon": -79.38, "pickup": "15:10"})
+            config.Store(path).update_settings({"weather": {"pickup": ""}})
+            self.assertEqual(config.Store(path).settings["weather"]["pickup"], "")
+            with self.assertRaises(config.ValidationError):
+                config.Store(path).update_settings({"weather": {"pickup": "3pm"}})
 
     def test_outing_flag_on_schedules(self):
         raw = {"name": "学校", "kind": "weekly", "time": "08:35", "days": [0],

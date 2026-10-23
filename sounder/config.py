@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import ai as ai_mod
-from . import calendarfeed, daysoff
+from . import calendarfeed, daysoff, outingtalk
 from . import weather as weather_mod
 
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
@@ -39,6 +39,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "ai": json.loads(json.dumps(ai_mod.DEFAULTS)),
     # 天気を取る地点（天気の補助アプリ SounderWeather.app が読む）
     "weather": dict(weather_mod.DEFAULTS),
+    # お出かけの読み上げ: AI で言い回しを変える・今日のフランス語（outingtalk.DEFAULTS）
+    "outing": dict(outingtalk.DEFAULTS),
     # 時間帯で流す（毎日 start〜end のあいだ、サウンドを繰り返し流す）。予定・タイムラインには出さない
     "bgm": [],
 }
@@ -385,7 +387,25 @@ def validate_settings(raw: Any, current: dict[str, Any]) -> dict[str, Any]:
                 raise ValidationError("緯度・経度は数で指定してください")
             if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                 raise ValidationError("緯度・経度の範囲が不正です")
-        out["weather"] = {"name": (w.get("name") or "").strip()[:80], "lat": lat, "lon": lon}
+        cur_w = {**weather_mod.DEFAULTS, **(current.get("weather") or {})}
+        if "lat" not in w and "lon" not in w:   # 帰りの時刻だけ変えるときは、場所はそのまま
+            lat, lon = cur_w["lat"], cur_w["lon"]
+        pickup = w.get("pickup", cur_w["pickup"]) or ""
+        if pickup:
+            pickup = _time(pickup, "帰りの時刻")
+        out["weather"] = {"name": (w.get("name", cur_w["name"]) or "").strip()[:80], "lat": lat, "lon": lon,
+                          "pickup": pickup}
+    if "outing" in raw:
+        o = raw["outing"] or {}
+        if not isinstance(o, dict):
+            raise ValidationError("お出かけの読み上げの設定が不正です")
+        cur = {**outingtalk.DEFAULTS, **(current.get("outing") or {})}
+        out["outing"] = {
+            "rephrase": bool(o.get("rephrase", cur["rephrase"])),
+            "french": bool(o.get("french", cur["french"])),
+            "french_voice": (o.get("french_voice", cur["french_voice"]) or "").strip()[:80],
+            "english_voice": (o.get("english_voice", cur["english_voice"]) or "").strip()[:80],
+        }
     if "bgm" in raw:
         out["bgm"] = validate_bgm(raw["bgm"] or [])
     if "tts_idle_minutes" in raw:

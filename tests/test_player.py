@@ -220,6 +220,17 @@ class TestPlay(Base):
         self.assertEqual(len(calls), 3)  # say(生成) + afplay(音) + afplay(読み上げ)
         self.assertIn("ding.wav", calls[1])
 
+    def test_then_reads_more_with_other_voices(self):
+        self.p.play_blocking({"type": "speak", "text": "Today's French word is", "voice": "Alex",
+                              "then": [{"text": "la pomme", "voice": "Amélie"}, {"text": "It means apple."}]},
+                             settings=self.settings)
+        calls = self.recorded()
+        says = [c for c in calls if c.startswith("say")]
+        self.assertEqual(len(says), 3)
+        self.assertIn("-v Amélie", says[1])
+        self.assertIn("-v Alex", says[2])     # 声が無ければ最初の声で
+        self.assertEqual(len([c for c in calls if c.startswith("afplay")]), 3)
+
     def test_speak_falls_back_to_default_voice(self):
         self.p.play_blocking({"type": "speak", "text": "はい"}, settings=self.settings)
         self.assertIn("-v Kyoko", self.recorded()[0])

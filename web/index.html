@@ -221,6 +221,31 @@
         <div id="weather-found"></div>
       </div>
       <p class="footnote" id="weather-desc"></p>
+      <h3 class="group-head" style="margin-top: 22px">お出かけの読み上げ</h3>
+      <div class="group">
+        <label class="cell">
+          <span class="cell-label">帰りの時刻</span>
+          <input type="time" class="cell-input" id="outing-pickup">
+        </label>
+        <div class="cell">
+          <span class="cell-label" id="outing-rephrase-label">AI で毎日言い回しを変える</span>
+          <button type="button" class="switch" id="outing-rephrase" role="switch" aria-checked="false" aria-labelledby="outing-rephrase-label"></button>
+        </div>
+        <div class="cell">
+          <span class="cell-label" id="outing-french-label">今日のフランス語</span>
+          <button type="button" class="switch" id="outing-french" role="switch" aria-checked="false" aria-labelledby="outing-french-label"></button>
+        </div>
+        <label class="cell" data-french-only>
+          <span class="cell-label">フランス語の声</span>
+          <select class="cell-input cell-select" id="outing-french-voice"></select>
+        </label>
+        <label class="cell" data-french-only>
+          <span class="cell-label">英語の説明の声</span>
+          <select class="cell-input cell-select" id="outing-english-voice"></select>
+        </label>
+        <button type="button" class="cell cell-button" data-french-only id="outing-french-test">フランス語を試聴</button>
+      </div>
+      <p class="footnote" id="outing-desc">「天気と服装も読み上げる」をオンにした予定の、その朝の最初のお知らせ（いちばん早い予告）に、昨日との気温の違い・帰りの時刻の天気・季節の節目（今季いちばんの冷え込み、初雪、時計の切り替え、日の入り）を足します。帰りの時刻を空にすると、帰りの天気は言いません。</p>
     </div>
 
     <div class="group-block" id="ai-block">
@@ -645,7 +670,7 @@
               <button type="button" class="switch" id="f-outing" role="switch" aria-checked="false" aria-labelledby="f-outing-label"></button>
             </div>
           </div>
-          <p class="footnote">本番と予告の読み上げのあとに、その時刻から 6 時間の天気と、着ていく服の目安を足します。例：「外は寒いです。体感温度は7度です。雨の心配はありません。寒いので厚手のジャケットを着ていきましょう。」</p>
+          <p class="footnote">本番と予告の読み上げのあとに、その時刻から 6 時間の天気と、着ていく服の目安を足します。例：「外は寒いです。体感温度は7度です。雨の心配はありません。寒いので厚手のジャケットを着ていきましょう。」その朝の最初のお知らせには、昨日との違い・帰りの天気・季節の話・今日のフランス語も足します（設定 → 天気）。</p>
         </div>
 
         <div class="group-block">
