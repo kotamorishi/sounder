@@ -1539,21 +1539,6 @@ function renderOutingSettings() {
   $('#outing-rephrase-label').textContent = ai.enabled ? 'AI で毎日言い回しを変える' : 'AI で毎日言い回しを変える（AI 連携がオフ）';
 }
 
-async function previewFrench() {
-  const cfg = Object.assign({}, OUTING_DEFAULTS, state.settings.outing || {});
-  const v = state.settings.default_voice || '';
-  const en = cfg.english_voice || v;
-  const fr = cfg.french_voice || v;
-  try {
-    await api('POST', '/api/preview', {
-      type: 'speak', text: 'Today\'s French word is', voice: en, volume: Number($('#set-volume').value),
-      then: [{ text: 'la citrouille', voice: fr }, { text: 'It means the pumpkin.', voice: en },
-        { text: 'La citrouille est orange.', voice: fr }, { text: 'The pumpkin is orange.', voice: en }],
-    });
-    toast('再生しました');
-  } catch (e) { fail(e); }
-}
-
 async function findWeatherPlace() {
   const q = $('#weather-q').value.trim();
   if (!q) { toast('地名を入れてください', true); return; }
@@ -2635,7 +2620,6 @@ function wire() {
   });
   $('#outing-french-voice').addEventListener('change', (e) => saveOuting({ french_voice: e.target.value }, '保存しました'));
   $('#outing-english-voice').addEventListener('change', (e) => saveOuting({ english_voice: e.target.value }, '保存しました'));
-  $('#outing-french-test').addEventListener('click', previewFrench);
   $('#weather-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); findWeatherPlace(); } });
   $('#ai-enabled').addEventListener('click', () => {
     const on = !isOn($('#ai-enabled'));
