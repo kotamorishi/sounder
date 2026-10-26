@@ -89,6 +89,7 @@ scripts/install-tts.sh          # .venv-tts/ を作り、LaunchAgent を登録�
 
 - 初回は Hugging Face からモデル（CustomVoice 約 3.6GB）を取る。声を作る機能を使うと VoiceDesign・Base（各約 3.6GB）も取る。
 - 動いている間のメモリは 3〜7GB。16GB 以上の Mac を推奨。
+- 作った声で作ったときと違う言語（日本語の声で英語など）を読むときは、同じ説明でその言語の見本（`data/voices/<id>/ref-english.wav`）を一度だけ作って使う（日本語の見本のままだと日本語なまりになる）。
 
 確認:
 

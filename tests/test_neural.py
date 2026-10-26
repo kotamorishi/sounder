@@ -69,6 +69,15 @@ class TestLanguage(unittest.TestCase):
         self.assertFalse(neural.is_neural("Kyoko"))
         self.assertFalse(neural.is_neural(""))
 
+    def test_designed_voice_keeps_english_audio_apart(self):
+        # 作った声の英語は英語の見本で読むので、以前の（日本語の見本で読んだ）音声を使い回さない
+        with tempfile.TemporaryDirectory() as d:
+            q = neural.NeuralTTS(Path(d))
+            self.assertEqual(q._cache_voice("qwen:design:f6105caf", "It means the coat."),
+                             "qwen:design:f6105caf#english")
+            self.assertEqual(q._cache_voice("qwen:design:f6105caf", "おはよう"), "qwen:design:f6105caf")
+            self.assertEqual(q._cache_voice("qwen:ono_anna", "It means the coat."), "qwen:ono_anna")
+
 
 class TestClient(ServerMixin, unittest.TestCase):
     def setUp(self):

@@ -101,21 +101,25 @@ class Engine:
         out.sort(key=lambda m: m.get("created") or "")
         return out
 
+    def _voice_design(self, text: str, language: str, instruct: str, name: str) -> tuple[np.ndarray, int]:
+        """VoiceDesign で見本の音声を作る（self.lock を持ったまま呼ぶ）。"""
+        model = self._load(DESIGN_MODEL)
+        try:
+            t = time.time()
+            audio = join(model.generate_voice_design(text=text, language=language, instruct=instruct))
+            rate = model.sample_rate
+            log(f"声を作りました（{language}・{time.time() - t:.1f} 秒）: {name}")
+            return audio, rate
+        finally:
+            # VoiceDesign は作るときにしか使わないので、すぐメモリから降ろす
+            del model
+            gc.collect()
+            mx.clear_cache()
+
     def design(self, name: str, description: str, language: str) -> dict:
         ref_text = REF_TEXT.get(language, REF_TEXT["japanese"])
         with self.lock:
-            model = self._load(DESIGN_MODEL)
-            try:
-                t = time.time()
-                audio = join(model.generate_voice_design(
-                    text=ref_text, language=language, instruct=description))
-                rate = model.sample_rate
-                log(f"声を作りました（{time.time() - t:.1f} 秒）: {name}")
-            finally:
-                # VoiceDesign は作るときにしか使わないので、すぐメモリから降ろす
-                del model
-                gc.collect()
-                mx.clear_cache()
+            audio, rate = self._voice_design(ref_text, language, description, name)
         vid = uuid.uuid4().hex[:8]
         d = self.voices_dir / vid
         d.mkdir(parents=True)
@@ -132,6 +136,25 @@ class Engine:
         shutil.rmtree(d)
         return True
 
+    def _ref_for(self, d: Path, meta: dict, language: str) -> tuple[Path, str]:
+        """作った声の見本（self.lock を持ったまま呼ぶ）。
+
+        作ったときと違う言語の文は、その言語の見本で読む（日本語の見本のまま英語を読ませると
+        日本語なまりになるため）。その言語の見本が無ければ、同じ説明で一度だけ作って取っておく。
+        """
+        made = meta.get("language") or "japanese"
+        if language == made or language not in REF_TEXT:
+            return d / "ref.wav", meta["ref_text"]
+        path = d / f"ref-{language}.wav"
+        if not path.is_file():
+            instruct = meta.get("description") or ""
+            if language == "english":
+                instruct += " Speak fluent, natural English with a native English accent."
+            audio, rate = self._voice_design(REF_TEXT[language], language, instruct.strip(),
+                                             meta.get("name") or d.name)
+            sf.write(path, audio, rate)
+        return path, REF_TEXT[language]
+
     # --- 読み上げ ---------------------------------------------------------
 
     def synthesize(self, text: str, speaker: str, language: str, style: str) -> bytes:
@@ -142,10 +165,11 @@ class Engine:
             d = self.voices_dir / vid
             meta = json.loads((d / "meta.json").read_text())
             with self.lock:
+                ref_audio, ref_text = self._ref_for(d, meta, language)
                 if self.base is None:
                     self.base = self._load(BASE_MODEL)
-                audio = join(self.base.generate(text=text, ref_audio=str(d / "ref.wav"),
-                                                ref_text=meta["ref_text"], lang_code=language))
+                audio = join(self.base.generate(text=text, ref_audio=str(ref_audio),
+                                                ref_text=ref_text, lang_code=language))
                 rate = self.base.sample_rate
         else:
             instruct = STYLES.get(style, {}).get(lang, "")

@@ -178,9 +178,13 @@ class _Engine:
         """速さが音声に効くエンジンだけ、キャッシュの鍵に速さを入れる。"""
         return None
 
+    def _cache_voice(self, voice: str, text: str) -> str:
+        """キャッシュの鍵に使う声の名前。読み方が変わったときに、古い音声を使い回さないため。"""
+        return voice
+
     def render(self, text: str, voice: str, rate: int | None = None) -> Path | None:
         """WAV のパスを返す。作れなければ None（呼び出し側が say に切り替える）。"""
-        path = self.cache.path(voice, self._cache_rate(rate), text)
+        path = self.cache.path(self._cache_voice(voice, text), self._cache_rate(rate), text)
         if self.cache.get(path):
             return path
         self.last_used = time.monotonic()
@@ -240,6 +244,12 @@ class NeuralTTS(_Engine):
                                 "locale": locale})
         presets.sort(key=lambda v: (not v["locale"].startswith("ja"), v["name"]))
         return out + presets
+
+    def _cache_voice(self, voice: str, text: str) -> str:
+        # 作った声の英語は英語の見本で読むようになった（以前の日本語なまりの音声と鍵を分ける）
+        if voice.startswith(f"{PREFIX}design:") and language_of(text) == "english":
+            return f"{voice}#english"
+        return voice
 
     def _synthesize(self, text: str, voice: str, rate: int | None) -> bytes:
         speaker, _, style = voice[len(PREFIX):].partition("@")
