@@ -2,8 +2,9 @@
 
 - 言い回し: AI 連携がオンなら、天気・服装・昨日との比べなどの決まった文を、毎朝違う言い方に AI に直してもらう。
   数字や服装の中身は変えさせない。間に合わなければ決まった文のまま読む。
-- 今日のフランス語: 子どもが学校で習うような簡単な単語を 1 つ、英語で説明する。単語と例文はフランス語の声で読む。
-  AI があれば今日の天気や季節に合う単語を選ばせ、無ければ決まった一覧から日替わりで選ぶ。
+- 今日のフランス語: 単語を 1 つ英語で説明し、例文を読む。単語と例文はフランス語の声で読む。
+  AI があれば今週の行事（ハロウィン・祝日・PA デーなど）や今日の天気にちなんだ単語と、
+  その話題の例文 2 つを作らせる。無ければ決まった一覧から日替わりで選ぶ。
 
 どちらも、その朝いちばん最初のお知らせ（いちばん早い予告、予告が無ければ本番）にだけ付ける。
 """
@@ -15,14 +16,57 @@ import json
 import os
 import threading
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
+
+from . import daysoff
 
 DEFAULTS = {"rephrase": True, "french": False, "french_voice": "Amélie", "english_voice": ""}
 # 何秒前から AI に文を作らせ始めるか（読み上げの音声は 3 分前から作るので、それより前に終わらせる）
 AHEAD = 15 * 60
 # 最近使った単語をいくつ覚えておくか（AI に同じ単語を選ばせない）
 KEEP_WORDS = 120
+# 例文をいくつまで読むか
+MAX_EXAMPLES = 2
+# 何日先までの行事を AI に伝えるか
+EVENT_DAYS = 7
+
+
+def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    d = date(year, month, 1)
+    return d + timedelta(days=(weekday - d.weekday()) % 7 + 7 * (n - 1))
+
+
+def seasonal_events(year: int) -> dict[date, str]:
+    """祝日ではないが、子どもの話題になる行事（例文の手がかりにする）。"""
+    return {
+        date(year, 2, 2): "グラウンドホッグ・デー",
+        date(year, 2, 14): "バレンタインデー",
+        date(year, 3, 17): "セント・パトリックス・デー",
+        date(year, 4, 22): "アースデー",
+        _nth_weekday(year, 5, 6, 2): "母の日",
+        _nth_weekday(year, 6, 6, 3): "父の日",
+        date(year, 10, 31): "ハロウィン",
+        date(year, 11, 11): "リメンブランス・デー",
+        date(year, 12, 24): "クリスマス・イブ",
+        date(year, 12, 31): "大みそか",
+    }
+
+
+def upcoming_events(day: date, days: int = EVENT_DAYS) -> list[str]:
+    """今日から days 日のあいだの行事・祝日・学校の休み（「10月31日（土）ハロウィン」の形）。"""
+    out, seen = [], set()
+    for i in range(days + 1):
+        d = day + timedelta(days=i)
+        names = [n for n in (seasonal_events(d.year).get(d), daysoff.ontario_holidays(d.year).get(d)) if n]
+        school = daysoff.reason("tdsb_elementary", d)
+        # 冬休みなど何日も続く休みは、最初の日にだけ書く
+        if school and school != "週末" and school not in names and school not in seen:
+            names.append(f"学校は{school}で休み")
+        seen.add(school)
+        if names:
+            out.append(f"{d.month}月{d.day}日（{'月火水木金土日'[d.weekday()]}）{'・'.join(names)}")
+    return out
 
 # AI が使えないときの日替わりの単語（単語・英語の意味・例文・例文の英訳）
 WORDS = [
@@ -97,7 +141,15 @@ def word_of_the_day(day: date) -> dict:
     """AI を使わないときの日替わりの単語。"""
     i = day.toordinal() % len(WORDS)
     w, meaning, ex, ex_en = WORDS[i]
-    return {"word": w, "meaning": meaning, "example": ex, "example_en": ex_en}
+    return {"word": w, "meaning": meaning, "examples": [{"fr": ex, "en": ex_en}]}
+
+
+def examples_of(fr: dict) -> list[dict]:
+    """例文の並び（[{"fr", "en"}]）。前の形（example・example_en が 1 つ）も読む。"""
+    exs = fr.get("examples")
+    if exs is None and fr.get("example"):
+        exs = [{"fr": fr["example"], "en": fr.get("example_en") or ""}]
+    return [e for e in exs or [] if isinstance(e, dict) and e.get("fr")][:MAX_EXAMPLES]
 
 
 def french_parts(fr: dict, settings: dict, voice: str) -> list[dict]:
@@ -107,10 +159,10 @@ def french_parts(fr: dict, settings: dict, voice: str) -> list[dict]:
     parts = [{"text": "Today's French word is", "voice": en},
              {"text": fr["word"], "voice": fv},
              {"text": f"It means {fr['meaning']}.", "voice": en}]
-    if fr.get("example"):
-        parts.append({"text": fr["example"], "voice": fv})
-        if fr.get("example_en"):
-            parts.append({"text": fr["example_en"], "voice": en})
+    for ex in examples_of(fr):
+        parts.append({"text": ex["fr"], "voice": fv})
+        if ex.get("en"):
+            parts.append({"text": ex["en"], "voice": en})
     return parts
 
 
@@ -184,14 +236,24 @@ class OutingTalk:
                 "子どもにも分かるやさしい日本語の話し言葉で、記号・絵文字・かっこ書きは使わない。200字以内。")
         if cfg["french"]:
             recent = "、".join(mem.get("words") or []) or "なし"
+            events = upcoming_events(day)
+            if not cfg["rephrase"]:
+                lines.append(f"今日の天気と服装: {facts}")
+            lines.append("今週の行事・祝日・学校の休み: " + ("、".join(events) if events else "特になし"))
             lines.append(
-                "french には、カナダ（オンタリオ州）の小学生がフランス語の授業で習うような、簡単なフランス語の単語を 1 つ選んで入れてください。"
-                "今日の天気・季節・近い行事に関係する単語だとなおよい。名詞は冠詞つき（l' の場合も）。"
+                "french には「今日のフランス語」を入れてください。聞くのはカナダ（オンタリオ州）の小学生で、"
+                "フランス語の授業を受けていて、簡単な単語はもう知っています。"
+                "単語は 1 つ。今週の行事（上の一覧）・季節・今日の天気など、いまの話題にちなんだものを選ぶ。"
+                "名詞は冠詞つき（l' の場合も）。"
                 f"最近使った単語は避ける: {recent}。"
-                "meaning は英語の意味（短く）、example はその単語を使った 6 語くらいまでのやさしいフランス語の文、"
-                "example_en はその英訳。")
+                "meaning は英語の意味（短く）。"
+                f"examples には、その単語を使ったフランス語の例文を {MAX_EXAMPLES} つ（fr）と、それぞれの英訳（en）を入れる。"
+                "例文は辞書の例ではなく、今日・今週の話題に結びつける"
+                "（例: ハロウィンの週の la citrouille なら「Ce week-end, tu vas voir beaucoup de citrouilles dehors.」"
+                "「Pour l'Halloween, les gens décorent leur maison avec des citrouilles.」）。"
+                "1 文は 12 語くらいまで。小学生に分かる言葉で、ふつうの会話の文にする。")
         keys = ", ".join(k for k, on in (('"talk": "…"', cfg["rephrase"]),
-                                          ('"french": {"word", "meaning", "example", "example_en"}', cfg["french"]))
+                                          ('"french": {"word", "meaning", "examples": [{"fr", "en"}]}', cfg["french"]))
                          if on)
         lines.append(f"JSON だけを出力してください（{{{keys}}}）。前置きやコードブロックは付けない。")
         return "\n".join(lines)
@@ -207,14 +269,16 @@ class OutingTalk:
             out["talk"] = d["talk"].strip()[:400]
         fr = d.get("french")
         if isinstance(fr, dict) and all(isinstance(fr.get(k), str) and fr[k].strip() for k in ("word", "meaning")):
-            out["french"] = {k: str(fr.get(k) or "").strip()[:120]
-                             for k in ("word", "meaning", "example", "example_en")}
+            out["french"] = {k: fr[k].strip()[:120] for k in ("word", "meaning")}
+            out["french"]["examples"] = [{"fr": str(e.get("fr") or "").strip()[:200],
+                                          "en": str(e.get("en") or "").strip()[:200]}
+                                         for e in examples_of(fr)]
         return out
 
     def _generate(self, settings: dict, key: str, facts: str, day: date) -> None:
         t = time.time()
         try:
-            got = self.parse(self.ai.complete(settings, self.prompt(settings, facts, day)))
+            got = self.parse(self.ai.complete(settings, self.prompt(settings, facts, day), max_tokens=1200))
             self._log("info", f"AI がお出かけの読み上げを作りました（{time.time() - t:.1f} 秒）")
         except Exception as exc:   # AI が使えなくても、決まった文で読めばよい
             got = {}

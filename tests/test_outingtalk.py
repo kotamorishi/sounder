@@ -20,7 +20,7 @@ class FakeAI:
     def __init__(self, answer=None, error=None):
         self.answer, self.error, self.prompts = answer, error, []
 
-    def complete(self, settings, prompt):
+    def complete(self, settings, prompt, **kw):
         self.prompts.append(prompt)
         if self.error:
             raise self.error
@@ -69,6 +69,32 @@ class TestOutingTalk(Base):
         p = t2.prompt(s, FACTS, DAY)
         self.assertIn("le froid", p)
         self.assertIn("おはよう。今朝は冷えるね。", p)
+
+    def test_two_examples_about_this_week(self):
+        ai = FakeAI(json.dumps({"french": {"word": "la citrouille", "meaning": "the pumpkin", "examples": [
+            {"fr": "Ce week-end, tu vas voir beaucoup de citrouilles dehors.",
+             "en": "This weekend, you will see lots of pumpkins outside."},
+            {"fr": "Pour l'Halloween, on décore la maison avec des citrouilles.",
+             "en": "For Halloween, we decorate the house with pumpkins."},
+            {"fr": "Trop.", "en": "Too many."}]}}))
+        s = settings(french=True, rephrase=False, english_voice="Samantha")
+        _first, (_text, parts) = self.run_now(self.talk(ai), s)
+        self.assertEqual([p["text"] for p in parts], [
+            "Today's French word is", "la citrouille", "It means the pumpkin.",
+            "Ce week-end, tu vas voir beaucoup de citrouilles dehors.",
+            "This weekend, you will see lots of pumpkins outside.",
+            "Pour l'Halloween, on décore la maison avec des citrouilles.",
+            "For Halloween, we decorate the house with pumpkins."])   # 例文は 2 つまで
+        self.assertEqual(parts[4]["voice"], "Samantha")
+        p = ai.prompts[0]
+        self.assertIn("ハロウィン", p)          # 今週の行事を伝える
+        self.assertIn(FACTS, p)                 # 言い換えがオフでも天気は伝える
+
+    def test_upcoming_events(self):
+        self.assertEqual(outingtalk.upcoming_events(date(2026, 10, 28)), ["10月31日（土）ハロウィン"])
+        dec = outingtalk.upcoming_events(date(2026, 12, 20))
+        self.assertEqual(sum("冬休み" in e for e in dec), 1)   # 続く休みは最初の日だけ
+        self.assertIn("12月25日（金）クリスマス", dec)
 
     def test_ai_failure_falls_back(self):
         t = self.talk(FakeAI(error=OSError("down")))

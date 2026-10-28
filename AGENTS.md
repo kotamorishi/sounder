@@ -170,7 +170,7 @@ scripts/install-weather.sh      # tools/weather の Xcode プロジェクトを�
 - 天気を画面に出すときは Apple Weather の表記とデータの出どころへのリンクが要る（設定画面に入れてある）。
 - 予定の「天気と服装も読み上げる」は、その朝の最初のお知らせ（いちばん早い予告）にだけ、昨日との違い・帰りの時刻（設定 weather.pickup）の天気・
   季節の節目を足す。過去の天気は `data/weather-history.json` に貯める（「今季初」は 7 日分たまるまで言わない）。
-  設定 outing（`sounder/outingtalk.py`）: AI 連携がオンなら言い回しを毎日変え、「今日のフランス語」（単語と例文はフランス語の say の声）を足す。
+  設定 outing（`sounder/outingtalk.py`）: AI 連携がオンなら言い回しを毎日変え、「今日のフランス語」（今週の行事・祝日・学校の休みや天気にちなんだ単語と、その話題の例文 2 つ。単語と例文はフランス語の say の声）を足す。
 
 ## 7b. AI 連携（任意）
 
