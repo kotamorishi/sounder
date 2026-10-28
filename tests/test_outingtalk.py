@@ -59,8 +59,10 @@ class TestOutingTalk(Base):
         self.assertEqual(first[0], FACTS)                       # 間に合わなければ決まった文
         self.assertEqual(text, "おはよう。今朝は冷えるね。")
         self.assertEqual([(p["text"], p["voice"]) for p in parts], [
-            ("Today's French word is", "qwen:x"), ("le froid", "Amélie"), ("It means the cold.", "qwen:x"),
-            ("Il fait froid.", "Amélie"), ("It is cold.", "qwen:x")])
+            ("Today's French word is", "qwen:x"),
+            ("le froid", "Amélie"), ("le froid", "Amélie"), ("le froid", "Amélie"),   # フランス語は何回か
+            ("It means the cold.", "qwen:x"),
+            ("Il fait froid.", "Amélie"), ("Il fait froid.", "Amélie"), ("It is cold.", "qwen:x")])
         self.assertIn(FACTS, ai.prompts[0])
         # 使った単語と言い方を覚えて、次の日の頼みに入れる
         mem = json.loads(self.path.read_text())
@@ -80,12 +82,14 @@ class TestOutingTalk(Base):
         s = settings(french=True, rephrase=False, english_voice="Samantha")
         _first, (_text, parts) = self.run_now(self.talk(ai), s)
         self.assertEqual([p["text"] for p in parts], [
-            "Today's French word is", "la citrouille", "It means the pumpkin.",
+            "Today's French word is", "la citrouille", "la citrouille", "la citrouille", "It means the pumpkin.",
+            "Ce week-end, tu vas voir beaucoup de citrouilles dehors.",
             "Ce week-end, tu vas voir beaucoup de citrouilles dehors.",
             "This weekend, you will see lots of pumpkins outside.",
             "Pour l'Halloween, on décore la maison avec des citrouilles.",
+            "Pour l'Halloween, on décore la maison avec des citrouilles.",
             "For Halloween, we decorate the house with pumpkins."])   # 例文は 2 つまで
-        self.assertEqual(parts[4]["voice"], "Samantha")
+        self.assertEqual(parts[7]["voice"], "Samantha")
         p = ai.prompts[0]
         self.assertIn("ハロウィン", p)          # 今週の行事を伝える
         self.assertIn(FACTS, p)                 # 言い換えがオフでも天気は伝える
@@ -107,7 +111,7 @@ class TestOutingTalk(Base):
         t = self.talk(ai)
         text, parts = t.get({"ai": {"enabled": False}, "outing": {"french": True}}, "k", FACTS, DAY, "Kyoko")
         self.assertEqual(text, FACTS)
-        self.assertEqual(len(parts), 5)
+        self.assertEqual(len(parts), 1 + 3 + 1 + 2 + 1)
         self.assertEqual(ai.prompts, [])
         text, parts = t.get({"ai": {"enabled": False}}, "k", FACTS, DAY, "Kyoko")
         self.assertEqual((text, parts), (FACTS, []))

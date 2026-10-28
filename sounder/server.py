@@ -528,7 +528,7 @@ class Handler(BaseHTTPRequestHandler):
                 "outputs": config_mod._outputs(body.get("outputs")),   # 鳴らす場所（AirPlay など）
                 # 続けて別の声で読む文（今日のフランス語の試聴など）
                 "then": [{"text": str(p.get("text") or "")[:300], "voice": str(p.get("voice") or "")[:80]}
-                         for p in (body.get("then") or [])[:8] if isinstance(p, dict)],
+                         for p in (body.get("then") or [])[:16] if isinstance(p, dict)],
             }
             if action["type"] in ("sound", "both") and not action.get("sound"):
                 raise ValidationError("サウンドを選んでください")

@@ -28,6 +28,9 @@ AHEAD = 15 * 60
 KEEP_WORDS = 120
 # 例文をいくつまで読むか
 MAX_EXAMPLES = 2
+# フランス語を何回ずつ読むか（英語は 1 回で足りるが、フランス語は何度か聞きたい）
+WORD_TIMES = 3
+EXAMPLE_TIMES = 2
 # 何日先までの行事を AI に伝えるか
 EVENT_DAYS = 7
 
@@ -153,14 +156,14 @@ def examples_of(fr: dict) -> list[dict]:
 
 
 def french_parts(fr: dict, settings: dict, voice: str) -> list[dict]:
-    """「今日のフランス語」の読み上げ（英語の説明は英語、単語と例文はフランス語の声で）。"""
+    """「今日のフランス語」の読み上げ（英語の説明は英語の声で 1 回、単語と例文はフランス語の声で何回か）。"""
     cfg = settings_of(settings)
     en, fv = cfg["english_voice"] or voice, cfg["french_voice"] or voice
-    parts = [{"text": "Today's French word is", "voice": en},
-             {"text": fr["word"], "voice": fv},
-             {"text": f"It means {fr['meaning']}.", "voice": en}]
+    parts = [{"text": "Today's French word is", "voice": en}]
+    parts += [{"text": fr["word"], "voice": fv}] * WORD_TIMES
+    parts.append({"text": f"It means {fr['meaning']}.", "voice": en})
     for ex in examples_of(fr):
-        parts.append({"text": ex["fr"], "voice": fv})
+        parts += [{"text": ex["fr"], "voice": fv}] * EXAMPLE_TIMES
         if ex.get("en"):
             parts.append({"text": ex["en"], "voice": en})
     return parts
