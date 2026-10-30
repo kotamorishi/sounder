@@ -2423,7 +2423,7 @@ function previewLate() {
   const m = draft.late_times[0] || 3;
   api('POST', '/api/preview', {
     type: 'both', sound: 'builtin:alarm',
-    text: `${$('#f-name').value.trim() || 'その予定'}の時間を、${m}分過ぎています。`,
+    text: `${($('#f-name').value.trim() || 'その予定').replace(/(.)の時間$/, '$1').trim()}の時間を、${m}分過ぎています。`,
     voice: a.voice, volume: Number(a.volume), outputs: draft.outputs || [],
   }).then(() => toast('過ぎたお知らせを再生しました')).catch(fail);
 }

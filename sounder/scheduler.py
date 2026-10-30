@@ -24,6 +24,14 @@ LATE_SOUND = "builtin:alarm"
 IDLE_CHECK_EVERY = 60.0
 
 
+def late_text(name: str, minutes: int) -> str:
+    """過ぎたお知らせの文。予定の名前が「〜の時間」で終わっていても「の時間の時間」にしない。"""
+    name = name.strip()
+    if name.endswith("の時間") and len(name) > 3:
+        name = name[:-3].rstrip()
+    return f"{name}の時間を、{minutes}分過ぎています。"
+
+
 def _minutes(hhmm: str) -> int:
     h, m = hhmm.split(":")
     return int(h) * 60 + int(m)
@@ -562,7 +570,7 @@ class Scheduler:
             # 「学校の時間を、3分過ぎています。」声と音量は本番に合わせる
             main = sched["action"]
             action = {"type": "both", "sound": LATE_SOUND,
-                      "text": f"{sched['name']}の時間を、{lead}分過ぎています。",
+                      "text": late_text(sched["name"], lead),
                       "voice": main.get("voice") or settings.get("default_voice"),
                       "rate": main.get("rate") or settings.get("speak_rate", 180),
                       "volume": main.get("volume", settings.get("default_volume")), "repeat": 1}

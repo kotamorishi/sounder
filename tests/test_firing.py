@@ -100,6 +100,11 @@ class TestFiring(Base):
         self.assertEqual((action["type"], action["text"], action["voice"], action["volume"]),
                          ("both", "学校の時間を、3分過ぎています。", "Kyoko", 0.4))
 
+    def test_late_text_does_not_repeat_no_jikan(self):
+        self.assertEqual(scheduler.late_text("学校の時間", 2), "学校の時間を、2分過ぎています。")
+        self.assertEqual(scheduler.late_text("お出かけ", 2), "お出かけの時間を、2分過ぎています。")
+        self.assertEqual(scheduler.late_text("の時間", 2), "の時間の時間を、2分過ぎています。")   # 名前が消えるなら残す
+
     def test_without_late_times_nothing_plays_after(self):
         self.add(time="08:37")
         t = datetime(2026, 9, 21, 8, 37, 30)
