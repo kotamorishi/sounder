@@ -7,7 +7,7 @@ import threading
 import time
 from datetime import date, datetime, timedelta
 
-from . import calendarfeed, daysoff, outingtalk
+from . import calendarfeed, daysoff, outingtalk, proverbs
 
 DAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"]
 LAST_DAY = "last"
@@ -358,8 +358,10 @@ class Scheduler:
     """1 秒ごとに時計を見て、その間に来た発火時刻を鳴らす。"""
 
     def __init__(self, store, player, log, *, grace: float = DEFAULT_GRACE, feed=None,
-                 extra_feeds=(), weather=None, talk=None) -> None:
+                 extra_feeds=(), weather=None, talk=None, proverbs=None) -> None:
         self.store = store
+        # 今日のことわざ（予定の proverb。proverbs.Proverbs）
+        self.proverbs = proverbs
         # お出かけ参考情報（予定の outing）に使う天気（weather.Weather）と、言い回し・今日のフランス語（outingtalk.OutingTalk）
         self.weather = weather
         self.talk = talk
@@ -526,6 +528,14 @@ class Scheduler:
                 for when, tag, lead in events_between(sched, now, now + timedelta(seconds=outingtalk.AHEAD)):
                     if outingtalk.first_of_the_morning(sched, tag, lead):
                         self.action_for(sched, tag, lead, settings, when=when)
+        if self.proverbs:
+            # ことわざも、AI に使い方を早めに作らせておく（action_for がその回のことわざを決めて作り始める）
+            for sched in self.all_schedules(settings):
+                if not sched.get("enabled") or not sched.get("proverb"):
+                    continue
+                for when, tag, lead in events_between(sched, now, now + timedelta(seconds=proverbs.AHEAD)):
+                    if outingtalk.first_of_the_morning(sched, tag, lead):
+                        self.action_for(sched, tag, lead, settings, when=when)
 
     def _fire(self, sched: dict, when: datetime, tag: str, lead: int, now, settings) -> None:
         if tag == "main" and sched.get("until"):
@@ -604,4 +614,20 @@ class Scheduler:
                     action.update(type="both" if action.get("sound") else "speak", text=extra,
                                   voice=action.get("voice") or settings.get("default_voice"),
                                   rate=action.get("rate") or settings.get("speak_rate", 180))
+        if sched.get("proverb") and self.proverbs and tag != "late" \
+                and outingtalk.first_of_the_morning(sched, tag, lead):
+            # 今日のことわざを、その回の最初のお知らせのいちばん最後に読む（試聴では次のことわざを見るだけ）
+            key = None
+            if when:
+                at = when + timedelta(minutes=lead) if tag == "lead" else when
+                key = f"{sched.get('id')}|{at:%Y-%m-%d %H:%M}"
+            voice = action.get("voice") or settings.get("default_voice") or ""
+            parts = self.proverbs.get(settings, key, voice)
+            action = dict(action)
+            if action.get("type") in ("speak", "both") and (action.get("text") or "").strip():
+                action["then"] = list(action.get("then") or []) + parts
+            else:
+                action.update(type="both" if action.get("sound") else "speak", text=parts[0]["text"],
+                              then=parts[1:], voice=voice,
+                              rate=action.get("rate") or settings.get("speak_rate", 180))
         return action

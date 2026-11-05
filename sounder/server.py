@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from . import scheduler as sched_mod
 from . import ai as ai_mod
-from . import calendarfeed, claudetasks, daysoff, neural, outingtalk, tones
+from . import calendarfeed, claudetasks, daysoff, neural, outingtalk, proverbs, tones
 from . import airplay as airplay_mod
 from . import weather as weather_mod
 from . import config as config_mod
@@ -92,8 +92,10 @@ class App:
         self.ai = ai_mod.AI(self.calendar, log=self.log, store=self.store, weather=self.weather,
                             closures=self.closures)
         self.talk = outingtalk.OutingTalk(self.ai, home / "data" / "outing-talk.json", log=self.log)
+        self.proverbs = proverbs.Proverbs(self.ai, home / "data" / "proverbs.json", log=self.log)
         self.scheduler = Scheduler(self.store, self.player, self.log, feed=self.calendar,
-                                   extra_feeds=[self.ai], weather=self.weather, talk=self.talk)
+                                   extra_feeds=[self.ai], weather=self.weather, talk=self.talk,
+                                   proverbs=self.proverbs)
         self.token = token
         self.started_at = datetime.now()
         self._pick_default_voice()

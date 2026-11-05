@@ -216,6 +216,8 @@ def validate_schedule(raw: Any, *, keep_id: str | None = None) -> dict[str, Any]
 
     # お出かけ参考情報: 読み上げに、その時刻からの天気と服装を足す
     s["outing"] = bool(raw.get("outing", False))
+    # 今日のことわざ: その回の最初のお知らせの最後に、ことわざを 1 つ読む（proverbs.py）
+    s["proverb"] = bool(raw.get("proverb", False))
 
     # 鳴らす場所。空ならこの Mac。[{"id", "name", "address"}, ...]（id "mac" はこの Mac、ほかは AirPlay の機器）
     s["outputs"] = _outputs(raw.get("outputs", [raw["output"]] if raw.get("output") else []))
@@ -293,6 +295,7 @@ def validate_schedule(raw: Any, *, keep_id: str | None = None) -> dict[str, Any]
         if action["type"] != "sound":
             raise ValidationError("終わりの時刻まで繰り返すときは、サウンドだけにしてください（読み上げはできません）")
         s["outing"] = False   # 天気の読み上げは付けない
+        s["proverb"] = False
     else:
         s["until"] = None
 

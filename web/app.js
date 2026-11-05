@@ -352,6 +352,7 @@ function alarmRow(s) {
   if (s.lead_times && s.lead_times.length) detailParts.push(` · ${SL.leadLabel(s.lead_times)}に予告`);
   if (s.late_times && s.late_times.length) detailParts.push(` · ${SL.lateLabel(s.late_times)}に過ぎたお知らせ`);
   if (s.outing) detailParts.push(' · 天気と服装も');
+  if (s.proverb) detailParts.push(' · ことわざも');
   if (s.until) detailParts.push(` · ${SL.shortHM(s.until)} まで流し続ける`);
   if ((s.outputs || []).length) detailParts.push(` · ${outputLabel(s.outputs)}で鳴らす`);
   const skipped = (s.skip_dates || []).filter((d) => d >= SL.isoDate(new Date()));
@@ -1889,7 +1890,7 @@ function blank() {
     date: SL.isoDate(now),
     days: [0, 1, 2, 3, 4], every_minutes: 60,
     day_of_month: String(now.getDate()), month: String(now.getMonth() + 1),
-    window: { start: '09:00', end: '21:00' }, lead_times: [], late_times: [], note: '', skip: [], outing: false,
+    window: { start: '09:00', end: '21:00' }, lead_times: [], late_times: [], note: '', skip: [], outing: false, proverb: false,
     action: {
       type: 'sound', sound: 'builtin:doorbell',
       volume: state.settings.default_volume ?? 0.6, repeat: 1,
@@ -1969,6 +1970,7 @@ function fillEditor() {
   $('#f-rate').value = draft.action.rate || 180;
   setSwitch($('#f-lead-speak'), !!draft.lead_action.speak_remaining);
   setSwitch($('#f-outing'), !!draft.outing);
+  setSwitch($('#f-proverb'), !!draft.proverb);
   $('#f-outing-block').hidden = !(state.weather && state.weather.installed);
   renderOutput();
   loadAirplay(false);
@@ -2323,6 +2325,7 @@ function collect() {
     late_times: kind === 'interval' ? [] : draft.late_times,
     skip: kind === 'once' ? [] : draft.skip,
     outing: !!draft.outing,
+    proverb: !!draft.proverb,
     outputs: draft.outputs || [],
     until: kind !== 'interval' && draft.until ? draft.until : null,
     action: {
@@ -2850,6 +2853,10 @@ function wire() {
   $('#f-outing').addEventListener('click', () => {
     draft.outing = !draft.outing;
     setSwitch($('#f-outing'), draft.outing);
+  });
+  $('#f-proverb').addEventListener('click', () => {
+    draft.proverb = !draft.proverb;
+    setSwitch($('#f-proverb'), draft.proverb);
   });
   $('#f-speak').addEventListener('click', () => {
     draft._speak = !draft._speak;
